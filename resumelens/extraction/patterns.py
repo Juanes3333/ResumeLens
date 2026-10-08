@@ -131,9 +131,68 @@ EDUCATION_ENTRY_PATTERN: Pattern[str] = re.compile(
     r"\((?:" + _RANGE + r"|(?P<graduation>" + _YEAR + r"))\)",
     re.MULTILINE | re.IGNORECASE,
 )
-
 # ---------------------------------------------------------------------------
-# 4. CAREER / EXPERIENCE
+# 4. TECHNICAL SKILLS
+# ---------------------------------------------------------------------------
+
+#: Programming languages commonly used in the supported professional profiles.
+#: The language recognizes canonical names and common textual variants.
+PROGRAMMING_LANGUAGE_PATTERN: Pattern[str] = re.compile(
+    r"(?<!\w)(?P<skill>"
+    r"Python|JavaScript|Javascript|JS|TypeScript|Typescript|TS|"
+r"Java|C\+\+|C#|C(?![+#])|Go|Golang|Rust|Kotlin|Swift|PHP|Ruby"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+#: Frontend and backend frameworks commonly appearing in technical resumes.
+FRAMEWORK_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"React(?:\.js|JS)?|Angular(?:\.js)?|Vue(?:\.js)?|"
+    r"Node(?:\.js|JS)?|Django|Spring[ \t]+Boot|Express(?:\.js)?|"
+    r"Next(?:\.js|JS)?|Flask|FastAPI|Laravel"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Machine-learning and data-processing libraries relevant to ResumeLens.
+ML_LIBRARY_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"Pandas|NumPy|Numpy|Scikit[- ]learn|sklearn|"
+    r"TensorFlow|Tensor[ \t]+Flow|PyTorch|Py[ \t]+Torch"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Relational and NoSQL database technologies.
+DATABASE_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"PostgreSQL|Postgres|MySQL|MariaDB|Oracle|SQLite|"
+    r"SQL[ \t]+Server|MongoDB|Mongo|Redis|Cassandra"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: Version-control platforms and tools.
+VERSION_CONTROL_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"Git|GitHub|GitLab|Bitbucket"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: DevOps and cloud technologies relevant to the supported profiles.
+DEVOPS_CLOUD_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"Docker|Kubernetes|Terraform|Jenkins|Ansible|"
+    r"AWS|Amazon[ \t]+Web[ \t]+Services|"
+    r"Azure|Microsoft[ \t]+Azure|"
+    r"GCP|Google[ \t]+Cloud(?:[ \t]+Platform)?"
+    r")\b",
+    re.IGNORECASE,
+)
+# ---------------------------------------------------------------------------
+# 5. CAREER / EXPERIENCE
 # ---------------------------------------------------------------------------
 
 #: Declared years of experience: ``<n>[+] years of [professional] experience
@@ -170,6 +229,12 @@ PATTERNS: Dict[str, Pattern[str]] = {
     "degree": DEGREE_PATTERN,
     "institution": INSTITUTION_PATTERN,
     "education_entry": EDUCATION_ENTRY_PATTERN,
+    "programming_language": PROGRAMMING_LANGUAGE_PATTERN,
+    "framework": FRAMEWORK_PATTERN,
+    "ml_library": ML_LIBRARY_PATTERN,
+    "database": DATABASE_PATTERN,
+    "version_control": VERSION_CONTROL_PATTERN,
+    "devops_cloud": DEVOPS_CLOUD_PATTERN,
     "years_experience": YEARS_EXPERIENCE_PATTERN,
     "experience_entry": EXPERIENCE_ENTRY_PATTERN,
 }
