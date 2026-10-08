@@ -76,7 +76,7 @@ VALID = list(EXPECTED)
 # Pattern registry
 # ---------------------------------------------------------------------------
 def test_all_patterns_are_compiled():
-    assert len(p.PATTERNS) == 12
+    assert len(p.PATTERNS) == 18
     assert all(isinstance(pat, re.Pattern) for pat in p.PATTERNS.values())
 
 
@@ -259,7 +259,136 @@ def test_education_on_fixtures(resume_texts, alias):
     assert p.DEGREE_PATTERN.search(resume_texts[alias])["degree"] == d["degree"]
     assert p.INSTITUTION_PATTERN.search(resume_texts[alias])["institution"] == exp["institution"]
 
+# ---------------------------------------------------------------------------
+# Technical skills
+# ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Technical Skills: Python, JavaScript, JS, TypeScript",
+            ["Python", "JavaScript", "JS", "TypeScript"],
+        ),
+        (
+            "Experience with Java, C++, C#, Go and Rust",
+            ["Java", "C++", "C#", "Go", "Rust"],
+        ),
+    ],
+)
+def test_programming_language_matches(text, expected):
+    matches = [m["skill"] for m in p.PROGRAMMING_LANGUAGE_PATTERN.finditer(text)]
+    assert matches == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "React.js, Angular, Vue.js and NodeJS",
+            ["React.js", "Angular", "Vue.js", "NodeJS"],
+        ),
+        (
+            "Backend: Django, Spring Boot, Express.js and FastAPI",
+            ["Django", "Spring Boot", "Express.js", "FastAPI"],
+        ),
+    ],
+)
+def test_framework_matches(text, expected):
+    matches = [m["skill"] for m in p.FRAMEWORK_PATTERN.finditer(text)]
+    assert matches == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Pandas, NumPy, Scikit-learn and TensorFlow",
+            ["Pandas", "NumPy", "Scikit-learn", "TensorFlow"],
+        ),
+        (
+            "sklearn, Tensor Flow, Py Torch",
+            ["sklearn", "Tensor Flow", "Py Torch"],
+        ),
+    ],
+)
+def test_ml_library_matches(text, expected):
+    matches = [m["skill"] for m in p.ML_LIBRARY_PATTERN.finditer(text)]
+    assert matches == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Postgres, PostgreSQL, MySQL and MongoDB",
+            ["Postgres", "PostgreSQL", "MySQL", "MongoDB"],
+        ),
+        (
+            "SQL Server, Redis and Cassandra",
+            ["SQL Server", "Redis", "Cassandra"],
+        ),
+    ],
+)
+def test_database_matches(text, expected):
+    matches = [m["skill"] for m in p.DATABASE_PATTERN.finditer(text)]
+    assert matches == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Git, GitHub, GitLab and Bitbucket",
+            ["Git", "GitHub", "GitLab", "Bitbucket"],
+        ),
+    ],
+)
+def test_version_control_matches(text, expected):
+    matches = [m["skill"] for m in p.VERSION_CONTROL_PATTERN.finditer(text)]
+    assert matches == expected
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        (
+            "Docker, Kubernetes and Terraform",
+            ["Docker", "Kubernetes", "Terraform"],
+        ),
+        (
+            "AWS, Azure and GCP",
+            ["AWS", "Azure", "GCP"],
+        ),
+        (
+            "Amazon Web Services and Google Cloud Platform",
+            ["Amazon Web Services", "Google Cloud Platform"],
+        ),
+    ],
+)
+def test_devops_cloud_matches(text, expected):
+    matches = [m["skill"] for m in p.DEVOPS_CLOUD_PATTERN.finditer(text)]
+    assert matches == expected
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        p.PROGRAMMING_LANGUAGE_PATTERN,
+        p.FRAMEWORK_PATTERN,
+        p.ML_LIBRARY_PATTERN,
+        p.DATABASE_PATTERN,
+        p.VERSION_CONTROL_PATTERN,
+        p.DEVOPS_CLOUD_PATTERN,
+    ],
+)
+def test_skill_patterns_respect_token_boundaries(pattern):
+    text = (
+        "javascriptdeveloper reactnative "
+        "postgresql_database githubprofile "
+        "pythonista kubernetesservice"
+    )
+    assert pattern.search(text) is None
 # ---------------------------------------------------------------------------
 # Career / experience
 # ---------------------------------------------------------------------------
