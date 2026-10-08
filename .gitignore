@@ -39,6 +39,7 @@ htmlcov/
 *.swp
 *.swo
 *~
+.claude/
 
 # ------------------------------------------------------------------------------
 # Archivos temporales del sistema operativo
