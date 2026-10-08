@@ -1,0 +1,22 @@
+Mary Jane Watson
+
+Contact:
+Email: mj.watson@dailybugle.com
+Phone: +1 555 123 4567
+LinkedIn: https://www.linkedin.com/in/mary-jane-watson
+GitHub: https://github.com/mjwatson
+
+Summary:
+2 years of experience developing predictive models and data-processing pipelines.
+
+Technical Skills:
+Python, Pandas, NumPy, Scikit-learn, TensorFlow, SQL, Git.
+
+Education:
+M.S. in Data Science
+Empire State University (2022 - 2024)
+
+Experience:
+Machine Learning Engineer, Oscorp Analytics (2024 - 2026)
+- Trained classification models with Scikit-learn and TensorFlow.
+- Prepared datasets with Pandas, NumPy and SQL.
