@@ -1,0 +1,22 @@
+WEDNESDAY ADDAMS
+
+Contact:
+Email: wednesday.addams@nevermore.edu
+Phone: +1 555 666 7777
+LinkedIn: https://www.linkedin.com/in/wednesday-addams
+GitHub: https://github.com/wednesday-addams
+
+Summary:
+3 years of experience developing web applications.
+
+Technical Skills:
+JS, React.js, NodeJS, Postgres, Git.
+
+Education:
+B.S. in Computer Science
+Nevermore University (2019 - 2023)
+
+Experience:
+Full Stack Developer, Raven Labs (2023 - 2026)
+- Built a React.js dashboard backed by a NodeJS REST API.
+- Designed Postgres schemas and managed releases with Git.

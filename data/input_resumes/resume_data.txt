@@ -1,0 +1,22 @@
+Gwen Stacy
+
+Contact:
+Email: gwen.stacy@oscorp.com
+Phone: +1 555 888 9900
+LinkedIn: https://www.linkedin.com/in/gwen-stacy
+GitHub: https://github.com/gstacy
+
+Summary:
+3 years of experience building scalable data architectures and analytical pipelines.
+
+Technical Skills:
+Python, Apache Spark, Airflow, PostgreSQL, Git.
+
+Education:
+B.S. in Computer Engineering
+Brooklyn Institute (2019 - 2023)
+
+Experience:
+Data Engineer, Oscorp Data (2023 - 2026)
+- Processed large datasets with Apache Spark.
+- Orchestrated workflows in Airflow and loaded results into PostgreSQL.

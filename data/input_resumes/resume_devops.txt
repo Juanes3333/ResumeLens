@@ -1,0 +1,22 @@
+Peter Parker
+
+Contact:
+Email: peter.parker@dailybugle.com
+Phone: +1 555 222 3344
+LinkedIn: https://www.linkedin.com/in/peter-parker
+GitHub: https://github.com/pparker
+
+Summary:
+3 years of experience automating infrastructure and deployment pipelines.
+
+Technical Skills:
+Python, Docker, Kubernetes, Terraform, Git.
+
+Education:
+B.S. in Systems Engineering
+Midtown Tech (2019 - 2023)
+
+Experience:
+DevOps Engineer, Stark Cloud (2023 - 2026)
+- Provisioned infrastructure with Terraform.
+- Deployed containerized services with Docker and Kubernetes.
