@@ -155,3 +155,260 @@ previous character is not in W").
 The tests of `tests/test_patterns.py` and `tests/test_extraction.py` verify each pattern
 with strings inside and outside its language, including the invalid resume, in which no
 pattern finds matches.
+
+---
+
+## Section 2. Finite-state transducers (Stage 2)
+
+Stage 2 (`resumelens/normalization/`) turns each raw token of `raw_skills` into the canonical
+name of the technology it denotes (`JS` → `JAVASCRIPT`, `Postgres` → `POSTGRESQL`) and puts
+the result in the canonical order of the selected profile. The mapping is defined with
+deterministic finite-state transducers (FST) built with `pyformlang.fst.FST` in
+`resumelens/normalization/transducers.py` and applied with `translate`.
+
+### 2.1 Definition
+
+A transducer is the 7-tuple **M = (Q, Σ, Γ, δ, ω, q₀, F)**, where:
+
+| Component | Meaning |
+|---|---|
+| Q | Finite set of states |
+| Σ | Finite input alphabet |
+| Γ | Finite output alphabet |
+| δ : Q × (Σ ∪ {λ}) → Q | Transition function |
+| ω : Q × (Σ ∪ {λ}) → Γ\* | Output function |
+| q₀ ∈ Q | Initial state |
+| F ⊆ Q | Set of accepting states |
+
+`pyformlang` stores δ and ω together: the call `add_transitions([(q, u, q', [v])])` means
+δ(q, u) = q' and ω(q, u) = v, and the transition is drawn **u:v**. The output of a word
+u₁u₂…uₙ is ω(q₀, u₁)·ω(q₁, u₂)·…·ω(qₙ₋₁, uₙ), where qᵢ = δ(qᵢ₋₁, uᵢ), and it is defined only
+if qₙ ∈ F. If some transition is missing or the last state is not in F, the transducer
+**rejects** the word and `translate` returns no output (an implicit error state, as in the
+automata of Section 1.7).
+
+All the transducers below are **deterministic**: for every pair (q, u) there is at most one
+transition. `build_transducer` guarantees it by raising `ValueError` when two canonical names
+claim the same spelling.
+
+### 2.2 Normalization as a composition of two transducers
+
+Normalization of a token w is the composition **T = T_family ∘ T_case**, following the two
+kinds of examples of the classes (the identity transducer that copies character by character
+and the one that translates whole words):
+
+1. **T_case** reads the token one character at a time and writes it in lower case.
+2. **T_family** receives the whole folded token as **one** input symbol and writes the canonical
+   name as **one** output symbol.
+
+`apply_transducer(fst, token)` runs both: it calls `fold_case` (T_case) and then
+`fst.translate([folded])`. A token is recognized only if **both** accept it. If `translate`
+produced two different outputs, `apply_transducer` raises `ValueError`; with a deterministic
+T_family that cannot happen.
+
+### 2.3 Case-folding transducer T_case
+
+`build_case_folding_transducer()` builds M_case = (Q, Σ, Γ, δ, ω, q₀, F) with:
+
+| Component | Value |
+|---|---|
+| Q | {q0} |
+| Σ = `INPUT_ALPHABET` | The 57 characters that appear in some spelling of some family, in both cases: the 25 letters a–z except `x`, their 25 upper-case forms and the symbols `␣ # + - . 3 8` |
+| Γ | The lower-case forms of Σ: the 25 letters and the 7 symbols (32 characters) |
+| δ | δ(q0, c) = q0 for every c ∈ Σ |
+| ω | ω(q0, c) = lower(c) for every c ∈ Σ |
+| q₀ | q0 |
+| F | {q0} |
+
+It has one state and 57 transitions (all of them loops), so it is the identity transducer of
+the slides except that it writes lower-case letters. Its domain is Σ\*: a token with a
+character outside Σ (`Pythön`, `C$`, `🙂`) is rejected, and so is the empty token (`fold_case`
+returns `None`).
+
+Example: `React.js` is read as R:r, e:e, a:a, c:c, t:t, ".":".", j:j, s:s and the result is
+`react.js`.
+
+### 2.4 Family transducers T_family
+
+Each family has a table *canonical name → accepted spellings* (`WEB_VARIANTS`, `AI_VARIANTS`,
+`DB_VARIANTS`, `DEVOPS_VARIANTS`, `VCS_VARIANTS`, `LANGUAGE_VARIANTS`, `DATA_VARIANTS`). Let 𝒞
+be its set of canonical names and S(C) the set of lower-case spellings of C ∈ 𝒞.
+`build_transducer(variants)` builds M = (Q, Σ, Γ, δ, ω, q₀, F) with:
+
+| Component | Value |
+|---|---|
+| Q | {q0} ∪ {f_C : C ∈ 𝒞} |
+| Σ | ⋃ S(C) over C ∈ 𝒞: each element is a **complete** lower-case spelling (`react.js`, `spring boot`), not a character |
+| Γ | 𝒞: each element is a complete canonical name (`NODE_JS`) |
+| δ | δ(q0, s) = f_C for every C ∈ 𝒞 and s ∈ S(C); undefined elsewhere |
+| ω | ω(q0, s) = C for every C ∈ 𝒞 and s ∈ S(C) |
+| q₀ | q0 |
+| F | {f_C : C ∈ 𝒞} = Q − {q0} |
+
+Because the states f_C have no outgoing transitions, a word is accepted only if it has exactly
+one symbol, and the language accepted by M is Σ itself, a **finite** language: the set of
+spellings of the family. The translation is the function that sends each spelling s ∈ S(C) to
+C. No spelling appears in two families and `SkillNormalizer` checks that no canonical name is
+declared by two families, so the order in which the families are tried never changes the result.
+
+The five properties of T = T_family ∘ T_case on a token w are:
+
+- T(w) = C if and only if lower(w) ∈ S(C) and every character of w is in `INPUT_ALPHABET`.
+- Case does not matter: `jAvAsCrIpT`, `JAVASCRIPT` and `javascript` give `JAVASCRIPT`.
+- Spacing inside a name matters (`spring boot` is in Σ, `spring  boot` is not), except that the
+  normalizer first trims the token and collapses runs of whitespace (`SkillNormalizer`).
+- Partial matches are rejected: `Reactive`, `JavaScripts` and `Postgres 14` are not in Σ.
+- A token that belongs to another family is rejected by this one (`Postgres` is rejected by the
+  Web transducer and accepted by the database one).
+
+Sizes of the seven transducers (|δ| is the number of different lower-case spellings):
+
+| Family | Builder | \|Q\| | \|F\| = \|Γ\| | \|Σ\| = \|δ\| |
+|---|---|---|---|---|
+| Web / Frontend / Backend | `build_web_transducer` | 10 | 9 | 25 |
+| AI / ML / data libraries | `build_ai_transducer` | 9 | 8 | 21 |
+| Databases | `build_db_transducer` | 12 | 11 | 22 |
+| Cloud / DevOps | `build_devops_transducer` | 9 | 8 | 14 |
+| Version control | `build_vcs_transducer` | 2 | 1 | 4 |
+| Programming languages | `build_language_transducer` | 12 | 11 | 15 |
+| Data engineering | `build_data_transducer` | 3 | 2 | 5 |
+
+The following tables give δ and ω: each row is a state f_C, the output C and the input symbols s
+with δ(q0, s) = f_C and ω(q0, s) = C.
+
+#### Web / Frontend / Backend
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_JAVASCRIPT | JAVASCRIPT | `js`, `javascript` |
+| f_TYPESCRIPT | TYPESCRIPT | `ts`, `typescript` |
+| f_REACT | REACT | `react`, `react.js`, `reactjs` |
+| f_NODE_JS | NODE_JS | `node`, `node.js`, `nodejs` |
+| f_ANGULAR | ANGULAR | `angular`, `angularjs`, `angular.js` |
+| f_VUE | VUE | `vue`, `vue.js`, `vuejs` |
+| f_SPRING_BOOT | SPRING_BOOT | `spring boot`, `springboot` |
+| f_DJANGO | DJANGO | `django` |
+| f_REST_API | REST_API | `rest`, `rest api`, `rest apis`, `restful`, `restful api`, `restful apis` |
+
+#### AI / ML / data libraries
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_PANDAS | PANDAS | `pandas` |
+| f_NUMPY | NUMPY | `numpy`, `num py` |
+| f_SCIKIT_LEARN | SCIKIT_LEARN | `scikit-learn`, `scikit learn`, `scikitlearn`, `sklearn`, `sk-learn` |
+| f_TENSORFLOW | TENSORFLOW | `tensorflow`, `tensor flow`, `tf` |
+| f_PYTORCH | PYTORCH | `pytorch`, `py torch`, `torch` |
+| f_KERAS | KERAS | `keras` |
+| f_MATPLOTLIB | MATPLOTLIB | `matplotlib` |
+| f_ML_MODEL_DEVELOPMENT | ML_MODEL_DEVELOPMENT | `machine-learning model development`, `machine learning model development`, `ml model development`, `machine learning`, `machine-learning` |
+
+#### Databases
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_SQL | SQL | `sql` |
+| f_NOSQL | NOSQL | `nosql` |
+| f_POSTGRESQL | POSTGRESQL | `postgresql`, `postgres`, `postgre sql`, `psql` |
+| f_MYSQL | MYSQL | `mysql`, `my sql` |
+| f_MARIADB | MARIADB | `mariadb` |
+| f_SQLITE | SQLITE | `sqlite`, `sqlite3` |
+| f_SQL_SERVER | SQL_SERVER | `sql server`, `sqlserver`, `mssql`, `ms sql` |
+| f_ORACLE | ORACLE | `oracle`, `oracle db` |
+| f_MONGODB | MONGODB | `mongodb`, `mongo`, `mongo db` |
+| f_REDIS | REDIS | `redis` |
+| f_CASSANDRA | CASSANDRA | `cassandra` |
+
+#### Cloud / DevOps
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_DOCKER | DOCKER | `docker` |
+| f_KUBERNETES | KUBERNETES | `kubernetes`, `k8s`, `kube` |
+| f_TERRAFORM | TERRAFORM | `terraform` |
+| f_JENKINS | JENKINS | `jenkins` |
+| f_ANSIBLE | ANSIBLE | `ansible` |
+| f_AWS | AWS | `aws`, `amazon web services` |
+| f_AZURE | AZURE | `azure`, `microsoft azure` |
+| f_GCP | GCP | `gcp`, `google cloud`, `google cloud platform` |
+
+#### Version control
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_GIT | GIT | `git`, `github`, `gitlab`, `bitbucket` |
+
+#### Programming languages
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_PYTHON | PYTHON | `python`, `python3` |
+| f_JAVA | JAVA | `java` |
+| f_C | C | `c` |
+| f_C_PLUS_PLUS | C_PLUS_PLUS | `c++`, `cpp` |
+| f_C_SHARP | C_SHARP | `c#`, `csharp` |
+| f_GO | GO | `go`, `golang` |
+| f_RUST | RUST | `rust` |
+| f_KOTLIN | KOTLIN | `kotlin` |
+| f_SWIFT | SWIFT | `swift` |
+| f_PHP | PHP | `php` |
+| f_RUBY | RUBY | `ruby` |
+
+JavaScript and TypeScript belong to the Web transducer, not to this one.
+
+#### Data engineering
+
+| State f_C | Output C | Input symbols s ∈ S(C) |
+|---|---|---|
+| f_SPARK | SPARK | `spark`, `apache spark`, `pyspark` |
+| f_AIRFLOW | AIRFLOW | `airflow`, `apache airflow` |
+
+### 2.5 Traces
+
+| Token | T_case | T_family | Result |
+|---|---|---|---|
+| `JS` | `js` | q0 —js:JAVASCRIPT→ f_JAVASCRIPT ∈ F | `JAVASCRIPT` |
+| `React.js` | `react.js` | q0 —react.js:REACT→ f_REACT ∈ F | `REACT` |
+| `Postgres` | `postgres` | q0 —postgres:POSTGRESQL→ f_POSTGRESQL ∈ F | `POSTGRESQL` |
+| `K8s` | `k8s` | q0 —k8s:KUBERNETES→ f_KUBERNETES ∈ F | `KUBERNETES` |
+| `Reactive` | `reactive` | no transition from q0 with `reactive` | rejected |
+| `Pythön` | `ö` ∉ Σ: no transition | not reached | rejected |
+| `Rust$` | `$` ∉ Σ: no transition | not reached | rejected |
+
+The normalizer (`SkillNormalizer` in `normalizer.py`) offers the token to the seven family
+transducers in a fixed order and keeps the first translation. It assigns to the canonical name a
+**category** (`SkillRecord.category`) that is not produced by the transducer but by a table
+(`WEB_CATEGORIES`, `AI_CATEGORIES`, `DEVOPS_CATEGORIES`, `DATA_CATEGORIES`, or one fixed
+category for databases, version control and languages). Then it removes repeated canonical
+names, keeping the first occurrence. Tokens rejected by all the transducers are reported as
+*unrecognized* and do not continue to Stage 3.
+
+### 2.6 Canonical order
+
+The sorter (`sorter.py`) makes the sequence read by the automata of Stage 3 independent of the
+order in which the candidate wrote the skills. For a profile P let (k₁, …, kₘ) be its **slots**
+(`PROFILE_SLOTS`): each slot is a category and corresponds to one item of the qualification
+list of the profile (for example, Full Stack: `web_language`, `frontend`, `backend`,
+`database`, `api`, `vcs`). Let pos_P(k) be the index of k in the list of slots. For a record r
+with category k(r) and canonical name n(r), the sorting key is:
+
+- key_P(r) = (0, pos_P(k(r)), n(r)) if k(r) is a slot of P (**profile part**);
+- key_P(r) = (1, k(r), n(r)) otherwise (**remaining part**, noise for this profile).
+
+Keys are compared lexicographically, with the natural order of integers and of strings
+(alphabetical). `sort_records_by_profile` sorts the records with key_P. Since n is injective on
+a de-duplicated list, key_P is a total order, and therefore:
+
+1. the output is a **permutation** of the input;
+2. the output depends only on the **set** of records, not on their order in the input;
+3. the profile part comes first, slot by slot; inside a slot the names are alphabetical, so a
+   slot with several skills (`NUMPY` and `PANDAS`) is also deterministic;
+4. a slot without skills is skipped: the order of the other slots is not altered;
+5. sorting an already sorted list does not change it (idempotence).
+
+Example of the assignment, Full Stack: `Git, NodeJS, JS, Postgres, React.js` is normalized to
+{GIT, NODE_JS, JAVASCRIPT, POSTGRESQL, REACT} and sorted to `JAVASCRIPT, REACT, NODE_JS,
+POSTGRESQL, GIT`. An unknown profile name raises `UnknownProfileError`.
+
+The properties 1–5 and the examples of this section are verified by `tests/test_normalization.py`
+(transducers and normalizer) and `tests/test_sorter.py` (canonical order).
