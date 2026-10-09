@@ -20,8 +20,8 @@ The transducer is built as a *trie*: one path of character-level transitions per
 with shared prefixes. Matching is case-insensitive because every letter has an upper-case
 and a lower-case transition that lead to the same state.
 
-This module only covers the Web stack. Transducers for other technology families are
-defined separately and reuse :func:`build_transducer`.
+The module defines one transducer per technology family (Web, AI / data libraries,
+databases and Cloud / DevOps tools), all produced by :func:`build_transducer`.
 """
 
 from functools import lru_cache
@@ -51,6 +51,52 @@ WEB_VARIANTS: Mapping[str, Tuple[str, ...]] = {
 
 #: Canonical names produced by the Web transducer.
 WEB_CANONICAL_FORMS: Tuple[str, ...] = tuple(WEB_VARIANTS)
+
+#: Artificial-intelligence, machine-learning and data-processing libraries.
+AI_VARIANTS: Mapping[str, Tuple[str, ...]] = {
+    "PANDAS": ("Pandas",),
+    "NUMPY": ("NumPy", "Num Py"),
+    "SCIKIT_LEARN": ("Scikit-learn", "Scikit learn", "Scikitlearn", "sklearn", "sk-learn"),
+    "TENSORFLOW": ("TensorFlow", "Tensor Flow", "TF"),
+    "PYTORCH": ("PyTorch", "Py Torch", "Torch"),
+    "KERAS": ("Keras",),
+    "MATPLOTLIB": ("Matplotlib",),
+}
+
+#: Canonical names produced by the AI transducer.
+AI_CANONICAL_FORMS: Tuple[str, ...] = tuple(AI_VARIANTS)
+
+#: Relational and NoSQL databases.
+DB_VARIANTS: Mapping[str, Tuple[str, ...]] = {
+    "SQL": ("SQL",),
+    "POSTGRESQL": ("PostgreSQL", "Postgres", "Postgre SQL", "PSQL"),
+    "MYSQL": ("MySQL", "My SQL"),
+    "MARIADB": ("MariaDB",),
+    "SQLITE": ("SQLite", "SQLite3"),
+    "SQL_SERVER": ("SQL Server", "SQLServer", "MSSQL", "MS SQL"),
+    "ORACLE": ("Oracle", "Oracle DB"),
+    "MONGODB": ("MongoDB", "Mongo", "Mongo DB"),
+    "REDIS": ("Redis",),
+    "CASSANDRA": ("Cassandra",),
+}
+
+#: Canonical names produced by the database transducer.
+DB_CANONICAL_FORMS: Tuple[str, ...] = tuple(DB_VARIANTS)
+
+#: Cloud, containerization, infrastructure-as-code and CI/CD tools.
+DEVOPS_VARIANTS: Mapping[str, Tuple[str, ...]] = {
+    "DOCKER": ("Docker",),
+    "KUBERNETES": ("Kubernetes", "K8s", "Kube"),
+    "TERRAFORM": ("Terraform",),
+    "JENKINS": ("Jenkins",),
+    "ANSIBLE": ("Ansible",),
+    "AWS": ("AWS", "Amazon Web Services"),
+    "AZURE": ("Azure", "Microsoft Azure"),
+    "GCP": ("GCP", "Google Cloud", "Google Cloud Platform"),
+}
+
+#: Canonical names produced by the Cloud / DevOps transducer.
+DEVOPS_CANONICAL_FORMS: Tuple[str, ...] = tuple(DEVOPS_VARIANTS)
 
 
 def _case_variants(char: str) -> List[str]:
@@ -140,6 +186,39 @@ def get_web_transducer() -> FST:
     return build_web_transducer()
 
 
+def build_ai_transducer() -> FST:
+    """Build the transducer of AI / ML / data libraries (:data:`AI_VARIANTS`)."""
+    return build_transducer(AI_VARIANTS)
+
+
+def build_db_transducer() -> FST:
+    """Build the transducer of databases (:data:`DB_VARIANTS`)."""
+    return build_transducer(DB_VARIANTS)
+
+
+def build_devops_transducer() -> FST:
+    """Build the transducer of Cloud / DevOps tools (:data:`DEVOPS_VARIANTS`)."""
+    return build_transducer(DEVOPS_VARIANTS)
+
+
+@lru_cache(maxsize=1)
+def get_ai_transducer() -> FST:
+    """Return the shared AI transducer, built on first use. Callers must not modify it."""
+    return build_ai_transducer()
+
+
+@lru_cache(maxsize=1)
+def get_db_transducer() -> FST:
+    """Return the shared database transducer, built on first use. Callers must not modify it."""
+    return build_db_transducer()
+
+
+@lru_cache(maxsize=1)
+def get_devops_transducer() -> FST:
+    """Return the shared Cloud / DevOps transducer, built on first use. Callers must not modify it."""
+    return build_devops_transducer()
+
+
 def apply_transducer(fst: FST, token: str) -> Optional[str]:
     """Translate ``token`` with ``fst`` and return the canonical string.
 
@@ -174,3 +253,39 @@ def normalize_web_skill(token: str) -> Optional[str]:
         The canonical name, or ``None`` if the token is not a Web-stack technology.
     """
     return apply_transducer(get_web_transducer(), token.strip())
+
+
+def normalize_ai_skill(token: str) -> Optional[str]:
+    """Normalize one raw token of the AI / data libraries to its canonical name.
+
+    Examples:
+        ``"sklearn"`` -> ``"SCIKIT_LEARN"``, ``"NumPy"`` -> ``"NUMPY"``.
+
+    Returns:
+        The canonical name, or ``None`` if the token is not an AI library.
+    """
+    return apply_transducer(get_ai_transducer(), token.strip())
+
+
+def normalize_db_skill(token: str) -> Optional[str]:
+    """Normalize one raw database token to its canonical name.
+
+    Examples:
+        ``"Postgres"`` -> ``"POSTGRESQL"``, ``"Mongo"`` -> ``"MONGODB"``.
+
+    Returns:
+        The canonical name, or ``None`` if the token is not a known database.
+    """
+    return apply_transducer(get_db_transducer(), token.strip())
+
+
+def normalize_devops_skill(token: str) -> Optional[str]:
+    """Normalize one raw Cloud / DevOps token to its canonical name.
+
+    Examples:
+        ``"K8s"`` -> ``"KUBERNETES"``, ``"Google Cloud"`` -> ``"GCP"``.
+
+    Returns:
+        The canonical name, or ``None`` if the token is not a Cloud / DevOps tool.
+    """
+    return apply_transducer(get_devops_transducer(), token.strip())
