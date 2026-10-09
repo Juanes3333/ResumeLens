@@ -1,12 +1,13 @@
 """Tests for Stage 2 — normalization with finite-state transducers.
 
-Covers the four transducer families defined in ``transducers.py`` (Web, AI / data
-libraries, databases and Cloud / DevOps), their formal 7-tuple structure, and the
+Covers the case-folding transducer and the seven family transducers defined in
+``transducers.py`` (Web, AI / data libraries, databases, Cloud / DevOps, version control,
+programming languages and data engineering), their formal 7-tuple structure, and the
 ``SkillNormalizer`` pipeline of ``normalizer.py`` that coordinates them (categories,
 duplicates, unrecognized tokens and integration with the Stage 1 extractor).
 
-Canonical ordering of the normalized skills is the job of the sorter (a later stage),
-so these tests only check the order of first appearance.
+Canonical ordering of the normalized skills is the job of ``sorter.py``, so these tests
+only check the order of first appearance.
 """
 
 import pytest
@@ -16,10 +17,8 @@ import resumelens.normalization as normalization
 from resumelens.core.models import SkillRecord
 from resumelens.extraction.extractor import extract_resume
 from resumelens.normalization.normalizer import (
-    DATA_VARIANTS,
+    CATEGORIES,
     DEFAULT_FAMILIES,
-    LANGUAGE_VARIANTS,
-    VCS_VARIANTS,
     WEB_CATEGORIES,
     NormalizationResult,
     SkillNormalizer,
@@ -32,24 +31,40 @@ from resumelens.normalization.normalizer import (
 from resumelens.normalization.transducers import (
     AI_CANONICAL_FORMS,
     AI_VARIANTS,
+    DATA_CANONICAL_FORMS,
+    DATA_VARIANTS,
     DB_CANONICAL_FORMS,
     DB_VARIANTS,
     DEVOPS_CANONICAL_FORMS,
     DEVOPS_VARIANTS,
-    END_OF_TOKEN,
+    FAMILY_VARIANTS,
     INITIAL_STATE,
+    INPUT_ALPHABET,
+    LANGUAGE_CANONICAL_FORMS,
+    LANGUAGE_VARIANTS,
+    VCS_CANONICAL_FORMS,
+    VCS_VARIANTS,
     WEB_CANONICAL_FORMS,
     WEB_VARIANTS,
     apply_transducer,
     build_ai_transducer,
+    build_case_folding_transducer,
+    build_data_transducer,
     build_db_transducer,
     build_devops_transducer,
+    build_language_transducer,
     build_transducer,
+    build_vcs_transducer,
     build_web_transducer,
+    final_state_of,
+    fold_case,
     get_web_transducer,
     normalize_ai_skill,
+    normalize_data_skill,
     normalize_db_skill,
     normalize_devops_skill,
+    normalize_language_skill,
+    normalize_vcs_skill,
     normalize_web_skill,
 )
 
@@ -74,6 +89,9 @@ WEB_EXPECTED = [
     ("Spring Boot", "SPRING_BOOT"),
     ("SpringBoot", "SPRING_BOOT"),
     ("Django", "DJANGO"),
+    ("REST", "REST_API"),
+    ("REST APIs", "REST_API"),
+    ("RESTful API", "REST_API"),
 ]
 
 
@@ -122,7 +140,8 @@ class TestWebTranslations:
                 assert normalize_web_skill(spelling) == canonical
 
     def test_variant_that_is_prefix_of_another_is_not_ambiguous(self):
-        # "react" is a prefix of "react.js" / "reactjs"; "node" of "nodejs"; same canonical.
+        # Each spelling is a whole input symbol, so a prefix ("react") and a longer
+        # spelling ("react.js") are different symbols with their own transition.
         assert normalize_web_skill("react") == "REACT"
         assert normalize_web_skill("react.js") == "REACT"
         assert normalize_web_skill("reactjs") == "REACT"
@@ -156,9 +175,9 @@ class TestWebRejections:
             "Vue.",
             "Angular.jss",
             "TypeScripts",
-            "react$",  # '$' must not behave as the end marker
-            END_OF_TOKEN,
-            "react" + END_OF_TOKEN,
+            "react$",  # '$' is outside the input alphabet
+            "<EOS>",
+            "REST API s",
         ],
     )
     def test_tokens_outside_the_language_have_no_translation(self, raw):
@@ -203,43 +222,32 @@ class TestWebTransducerStructure:
     def test_single_initial_state(self, fst):
         assert set(fst.start_states) == {INITIAL_STATE}
 
-    def test_one_final_state_per_canonical_name(self, fst):
-        assert set(fst.final_states) == {f"f_{name}" for name in WEB_CANONICAL_FORMS}
-        assert set(fst.final_states) <= set(fst.states)
+    def test_states_are_q0_plus_one_final_state_per_canonical_name(self, fst):
+        finals = {final_state_of(name) for name in WEB_CANONICAL_FORMS}
+        assert set(fst.final_states) == finals
+        assert set(fst.states) == finals | {INITIAL_STATE}
 
     def test_output_alphabet_is_the_set_of_canonical_names(self, fst):
         assert set(fst.output_symbols) == set(WEB_CANONICAL_FORMS)
 
-    def test_input_alphabet_is_characters_plus_end_marker(self, fst):
-        symbols = set(fst.input_symbols)
-        assert END_OF_TOKEN in symbols
-        assert all(len(s) == 1 for s in symbols - {END_OF_TOKEN})
-
-    def test_input_alphabet_contains_both_cases_of_letters(self, fst):
-        symbols = set(fst.input_symbols)
-        assert {"j", "J", "r", "R", "s", "S"} <= symbols
-        assert {".", " "} <= symbols
+    def test_input_alphabet_is_the_set_of_lower_case_spellings(self, fst):
+        expected = {s.lower() for spellings in WEB_VARIANTS.values() for s in spellings}
+        assert set(fst.input_symbols) == expected
 
     def test_transition_function_is_deterministic(self, fst):
         for (state, symbol), targets in fst.transitions.items():
             assert len(targets) == 1, (state, symbol)
 
-    def test_only_end_marker_transitions_produce_output(self, fst):
-        for (_, symbol), targets in fst.transitions.items():
-            for _, output in targets:
-                if symbol == END_OF_TOKEN:
-                    assert len(output) == 1 and output[0] in WEB_CANONICAL_FORMS
-                else:
-                    assert output == []
-
-    def test_end_marker_transitions_go_to_final_states_only(self, fst):
-        for (_, symbol), targets in fst.transitions.items():
-            if symbol == END_OF_TOKEN:
-                assert all(target in fst.final_states for target, _ in targets)
+    def test_every_transition_is_variant_to_canonical(self, fst):
+        # delta(q0, s) = f_C and omega(q0, s) = C for every spelling s of C.
+        for canonical, spellings in WEB_VARIANTS.items():
+            for spelling in spellings:
+                targets = fst.transitions[(INITIAL_STATE, spelling.lower())]
+                assert targets == [(final_state_of(canonical), [canonical])]
 
     def test_final_states_have_no_outgoing_transitions(self, fst):
         sources = {state for state, _ in fst.transitions}
-        assert not (sources & set(fst.final_states))
+        assert sources == {INITIAL_STATE}
 
     def test_canonical_forms_follow_declaration_order(self):
         assert WEB_CANONICAL_FORMS == (
@@ -251,6 +259,7 @@ class TestWebTransducerStructure:
             "VUE",
             "SPRING_BOOT",
             "DJANGO",
+            "REST_API",
         )
 
     def test_shared_instance_is_cached(self):
@@ -261,6 +270,51 @@ class TestWebTransducerStructure:
         assert first is not second
         assert set(first.states) == set(second.states)
         assert dict(first.transitions) == dict(second.transitions)
+
+    def test_translate_with_a_whole_word_symbol_as_in_the_slides(self, fst):
+        # Same call style as the class example: translate(['llor', 'ar']).
+        assert ["".join(out) for out in fst.translate(["react.js"])] == ["REACT"]
+        assert list(fst.translate(["React.js"])) == []  # case folding happens before
+
+
+# ---------------------------------------------------------------------------
+# Case-folding transducer (first transducer of the composition)
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def case_fst():
+    """Case-folding transducer shared by the tests below."""
+    return build_case_folding_transducer()
+
+
+class TestCaseFoldingTransducer:
+    def test_single_state_is_initial_and_final(self, case_fst):
+        assert set(case_fst.states) == {INITIAL_STATE}
+        assert set(case_fst.start_states) == {INITIAL_STATE}
+        assert set(case_fst.final_states) == {INITIAL_STATE}
+
+    def test_one_loop_per_character_writing_its_lower_case(self, case_fst):
+        assert set(case_fst.input_symbols) == set(INPUT_ALPHABET)
+        for char in INPUT_ALPHABET:
+            assert case_fst.transitions[(INITIAL_STATE, char)] == [(INITIAL_STATE, [char.lower()])]
+
+    def test_alphabet_has_both_cases_and_the_symbols_of_the_spellings(self):
+        assert {"j", "J", "r", "R", "s", "S", ".", " ", "-", "+", "#"} <= set(INPUT_ALPHABET)
+
+    @pytest.mark.parametrize(
+        "token, folded",
+        [("JS", "js"), ("React.js", "react.js"), ("C++", "c++"), ("Spring Boot", "spring boot")],
+    )
+    def test_fold_case(self, token, folded):
+        assert fold_case(token) == folded
+
+    @pytest.mark.parametrize("token", ["", "Pythön", "react$", "<EOS>", "C--!"])
+    def test_tokens_with_characters_outside_the_alphabet_are_rejected(self, token):
+        assert fold_case(token) is None
+
+    def test_custom_alphabet(self):
+        custom = build_case_folding_transducer("aAb")
+        assert ["".join(out) for out in custom.translate(list("Ab"))] == ["ab"]
+        assert list(custom.translate(list("aB"))) == []  # "B" is not in this alphabet
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +331,7 @@ class TestBuildTransducer:
     def test_duplicate_spelling_for_same_canonical_is_allowed(self):
         fst = build_transducer({"ALPHA": ["a", "A", "a"]})
         assert apply_transducer(fst, "a") == "ALPHA"
+        assert len(fst.transitions) == 1
 
     def test_conflicting_spelling_raises(self):
         with pytest.raises(ValueError, match="maps to both"):
@@ -303,14 +358,8 @@ class TestBuildTransducer:
         fst = FST()
         fst.add_start_state("s")
         fst.add_final_state("f")
-        fst.add_transitions(
-            [
-                ("s", "a", "m", []),
-                ("s", "a", "n", []),
-                ("m", END_OF_TOKEN, "f", ["ONE"]),
-                ("n", END_OF_TOKEN, "f", ["TWO"]),
-            ]
-        )
+        fst.add_final_state("g")
+        fst.add_transitions([("s", "a", "f", ["ONE"]), ("s", "a", "g", ["TWO"])])
         with pytest.raises(ValueError, match="Ambiguous translation"):
             apply_transducer(fst, "a")
 
@@ -364,11 +413,17 @@ AI_EXPECTED = [
     ("Torch", "PYTORCH"),
     ("Keras", "KERAS"),
     ("Matplotlib", "MATPLOTLIB"),
+    ("Machine-learning model development", "ML_MODEL_DEVELOPMENT"),
+    ("machine learning model development", "ML_MODEL_DEVELOPMENT"),
+    ("ML model development", "ML_MODEL_DEVELOPMENT"),
+    ("Machine Learning", "ML_MODEL_DEVELOPMENT"),
 ]
 
 DB_EXPECTED = [
     ("SQL", "SQL"),
     ("sql", "SQL"),
+    ("NoSQL", "NOSQL"),
+    ("nosql", "NOSQL"),
     ("PostgreSQL", "POSTGRESQL"),
     ("Postgres", "POSTGRESQL"),
     ("Postgre SQL", "POSTGRESQL"),
@@ -411,11 +466,53 @@ DEVOPS_EXPECTED = [
     ("Google Cloud Platform", "GCP"),
 ]
 
+VCS_EXPECTED = [
+    ("Git", "GIT"),
+    ("git", "GIT"),
+    ("GitHub", "GIT"),
+    ("GitLab", "GIT"),
+    ("Bitbucket", "GIT"),
+]
+
+LANGUAGE_EXPECTED = [
+    ("Python", "PYTHON"),
+    ("Python3", "PYTHON"),
+    ("Java", "JAVA"),
+    ("C", "C"),
+    ("C++", "C_PLUS_PLUS"),
+    ("CPP", "C_PLUS_PLUS"),
+    ("C#", "C_SHARP"),
+    ("CSharp", "C_SHARP"),
+    ("Go", "GO"),
+    ("Golang", "GO"),
+    ("Rust", "RUST"),
+    ("Kotlin", "KOTLIN"),
+    ("Swift", "SWIFT"),
+    ("PHP", "PHP"),
+    ("Ruby", "RUBY"),
+]
+
+DATA_EXPECTED = [
+    ("Spark", "SPARK"),
+    ("Apache Spark", "SPARK"),
+    ("PySpark", "SPARK"),
+    ("Airflow", "AIRFLOW"),
+    ("Apache Airflow", "AIRFLOW"),
+]
+
 # family label -> (normalize function, expected pairs, variant table, canonical names)
 FAMILY_CASES = {
     "ai": (normalize_ai_skill, AI_EXPECTED, AI_VARIANTS, AI_CANONICAL_FORMS),
     "database": (normalize_db_skill, DB_EXPECTED, DB_VARIANTS, DB_CANONICAL_FORMS),
     "devops": (normalize_devops_skill, DEVOPS_EXPECTED, DEVOPS_VARIANTS, DEVOPS_CANONICAL_FORMS),
+    "vcs": (normalize_vcs_skill, VCS_EXPECTED, VCS_VARIANTS, VCS_CANONICAL_FORMS),
+    "language": (
+        normalize_language_skill,
+        LANGUAGE_EXPECTED,
+        LANGUAGE_VARIANTS,
+        LANGUAGE_CANONICAL_FORMS,
+    ),
+    "data": (normalize_data_skill, DATA_EXPECTED, DATA_VARIANTS, DATA_CANONICAL_FORMS),
 }
 
 
@@ -501,21 +598,24 @@ class TestFamilyTables:
 
 
 # ---------------------------------------------------------------------------
-# Formal structure of the other transducers: 7-tuple (Q, Sigma, Gamma, delta, omega, q0, F)
+# Formal structure of every family transducer: 7-tuple (Q, Sigma, Gamma, delta, omega, q0, F)
 # ---------------------------------------------------------------------------
 STRUCTURE_CASES = [
-    ("web", build_web_transducer, WEB_CANONICAL_FORMS),
-    ("ai", build_ai_transducer, AI_CANONICAL_FORMS),
-    ("database", build_db_transducer, DB_CANONICAL_FORMS),
-    ("devops", build_devops_transducer, DEVOPS_CANONICAL_FORMS),
+    ("web", build_web_transducer, WEB_VARIANTS),
+    ("ai", build_ai_transducer, AI_VARIANTS),
+    ("database", build_db_transducer, DB_VARIANTS),
+    ("devops", build_devops_transducer, DEVOPS_VARIANTS),
+    ("vcs", build_vcs_transducer, VCS_VARIANTS),
+    ("language", build_language_transducer, LANGUAGE_VARIANTS),
+    ("data", build_data_transducer, DATA_VARIANTS),
 ]
 
 
 @pytest.fixture(scope="module", params=STRUCTURE_CASES, ids=[case[0] for case in STRUCTURE_CASES])
 def built_family(request):
-    """(transducer, canonical names) of each family, built once per family."""
-    _, builder, canonical_forms = request.param
-    return builder(), canonical_forms
+    """(transducer, variant table) of each family, built once per family."""
+    _, builder, variants = request.param
+    return builder(), variants
 
 
 class TestAllTransducersStructure:
@@ -527,50 +627,50 @@ class TestAllTransducersStructure:
         fst, _ = built_family
         assert set(fst.start_states) == {INITIAL_STATE}
 
-    def test_one_final_state_per_canonical_name(self, built_family):
-        fst, canonical_forms = built_family
-        assert set(fst.final_states) == {f"f_{name}" for name in canonical_forms}
-        assert set(fst.final_states) <= set(fst.states)
+    def test_states_are_q0_plus_one_final_state_per_canonical_name(self, built_family):
+        fst, variants = built_family
+        finals = {final_state_of(name) for name in variants}
+        assert set(fst.final_states) == finals
+        assert set(fst.states) == finals | {INITIAL_STATE}
 
     def test_output_alphabet_is_the_set_of_canonical_names(self, built_family):
-        fst, canonical_forms = built_family
-        assert set(fst.output_symbols) == set(canonical_forms)
+        fst, variants = built_family
+        assert set(fst.output_symbols) == set(variants)
 
-    def test_input_alphabet_is_characters_plus_end_marker(self, built_family):
-        fst, _ = built_family
-        symbols = set(fst.input_symbols)
-        assert END_OF_TOKEN in symbols
-        assert all(len(s) == 1 for s in symbols - {END_OF_TOKEN})
+    def test_input_alphabet_is_the_set_of_lower_case_spellings(self, built_family):
+        fst, variants = built_family
+        expected = {s.lower() for spellings in variants.values() for s in spellings}
+        assert set(fst.input_symbols) == expected
 
     def test_transition_function_is_deterministic(self, built_family):
         fst, _ = built_family
-        for (state, symbol), targets in fst.transitions.items():
-            assert len(targets) == 1, (state, symbol)
+        for key, targets in fst.transitions.items():
+            assert len(targets) == 1, key
 
-    def test_only_end_marker_transitions_produce_output(self, built_family):
-        fst, canonical_forms = built_family
-        for (_, symbol), targets in fst.transitions.items():
-            for _, output in targets:
-                if symbol == END_OF_TOKEN:
-                    assert len(output) == 1 and output[0] in canonical_forms
-                else:
-                    assert output == []
+    def test_every_transition_leaves_q0_with_one_canonical_output(self, built_family):
+        fst, variants = built_family
+        for (state, _), targets in fst.transitions.items():
+            assert state == INITIAL_STATE
+            for target, output in targets:
+                assert len(output) == 1 and output[0] in variants
+                assert target == final_state_of(output[0])
 
-    def test_end_marker_transitions_go_to_final_states_only(self, built_family):
+    def test_family_alphabet_is_inside_the_case_folding_alphabet(self, built_family):
         fst, _ = built_family
-        for (_, symbol), targets in fst.transitions.items():
-            if symbol == END_OF_TOKEN:
-                assert all(target in fst.final_states for target, _ in targets)
-
-    def test_final_states_have_no_outgoing_transitions(self, built_family):
-        fst, _ = built_family
-        sources = {state for state, _ in fst.transitions}
-        assert not (sources & set(fst.final_states))
+        assert all(set(symbol) <= set(INPUT_ALPHABET) for symbol in fst.input_symbols)
 
 
 class TestFreshBuildsAndCaching:
     @pytest.mark.parametrize(
-        "builder", [build_ai_transducer, build_db_transducer, build_devops_transducer]
+        "builder",
+        [
+            build_ai_transducer,
+            build_db_transducer,
+            build_devops_transducer,
+            build_vcs_transducer,
+            build_language_transducer,
+            build_data_transducer,
+        ],
     )
     def test_fresh_builds_are_equivalent(self, builder):
         first, second = builder(), builder()
@@ -587,15 +687,7 @@ class TestFreshBuildsAndCaching:
 # ---------------------------------------------------------------------------
 # The seven families together: the tables must not overlap
 # ---------------------------------------------------------------------------
-FAMILY_TABLES = {
-    "web": WEB_VARIANTS,
-    "ai": AI_VARIANTS,
-    "database": DB_VARIANTS,
-    "devops": DEVOPS_VARIANTS,
-    "vcs": VCS_VARIANTS,
-    "language": LANGUAGE_VARIANTS,
-    "data": DATA_VARIANTS,
-}
+FAMILY_TABLES = FAMILY_VARIANTS
 
 
 class TestFamiliesAreDisjoint:
@@ -666,28 +758,36 @@ NORMALIZER_EXPECTED = [
 ]
 
 CATEGORY_EXPECTED = [
-    ("JAVASCRIPT", "frontend"),
-    ("TYPESCRIPT", "frontend"),
+    ("JAVASCRIPT", "web_language"),
+    ("TYPESCRIPT", "web_language"),
     ("REACT", "frontend"),
     ("ANGULAR", "frontend"),
     ("VUE", "frontend"),
     ("NODE_JS", "backend"),
     ("SPRING_BOOT", "backend"),
     ("DJANGO", "backend"),
-    ("PANDAS", "ml"),
-    ("SCIKIT_LEARN", "ml"),
-    ("TENSORFLOW", "ml"),
+    ("REST_API", "api"),
+    ("PANDAS", "data_library"),
+    ("NUMPY", "data_library"),
+    ("SCIKIT_LEARN", "ml_framework"),
+    ("TENSORFLOW", "ml_framework"),
+    ("PYTORCH", "ml_framework"),
+    ("ML_MODEL_DEVELOPMENT", "ml_practice"),
     ("SQL", "database"),
+    ("NOSQL", "database"),
     ("POSTGRESQL", "database"),
     ("MONGODB", "database"),
-    ("DOCKER", "cloud"),
-    ("KUBERNETES", "cloud"),
+    ("DOCKER", "container"),
+    ("KUBERNETES", "orchestration"),
+    ("TERRAFORM", "iac"),
+    ("ANSIBLE", "iac"),
+    ("JENKINS", "ci_cd"),
     ("AWS", "cloud"),
     ("GIT", "vcs"),
     ("PYTHON", "language"),
     ("C_PLUS_PLUS", "language"),
-    ("SPARK", "data"),
-    ("AIRFLOW", "data"),
+    ("SPARK", "data_processing"),
+    ("AIRFLOW", "workflow"),
 ]
 
 
@@ -732,7 +832,7 @@ class TestNormalizeSingleSkill:
 
     @pytest.mark.parametrize(
         "raw",
-        ["", "   ", "\n", "COBOL", "Fortran", "Reactt", "Python 3", "Rust!", "Pythön", "C--", END_OF_TOKEN],
+        ["", "   ", "\n", "COBOL", "Fortran", "Reactt", "Python 3", "Rust!", "Pythön", "C--", "<EOS>"],
     )
     def test_unknown_tokens_are_rejected(self, normalizer, raw):
         assert normalizer.normalize_skill(raw) is None
@@ -756,7 +856,12 @@ class TestCategories:
 
     def test_web_categories_cover_exactly_the_web_canonical_names(self):
         assert set(WEB_CATEGORIES) == set(WEB_CANONICAL_FORMS)
-        assert set(WEB_CATEGORIES.values()) == {"frontend", "backend"}
+        assert set(WEB_CATEGORIES.values()) == {"web_language", "frontend", "backend", "api"}
+
+    def test_every_category_is_declared(self, normalizer):
+        for table in FAMILY_TABLES.values():
+            for canonical in table:
+                assert normalizer.category_of(canonical) in CATEGORIES, canonical
 
     def test_every_known_spelling_has_a_category(self, normalizer):
         for table in FAMILY_TABLES.values():
@@ -801,7 +906,7 @@ class TestNormalizeList:
         assert records == [
             SkillRecord("Git", "GIT", "vcs"),
             SkillRecord("NodeJS", "NODE_JS", "backend"),
-            SkillRecord("JS", "JAVASCRIPT", "frontend"),
+            SkillRecord("JS", "JAVASCRIPT", "web_language"),
         ]
 
     def test_equivalent_spellings_collapse_into_the_first_one(self, normalizer):
@@ -877,7 +982,7 @@ class TestNormalizationResult:
 
     def test_canonical_names_follow_records(self):
         result = NormalizationResult(
-            records=[SkillRecord("JS", "JAVASCRIPT", "frontend"), SkillRecord("Git", "GIT", "vcs")]
+            records=[SkillRecord("JS", "JAVASCRIPT", "web_language"), SkillRecord("Git", "GIT", "vcs")]
         )
         assert result.canonical_names == ["JAVASCRIPT", "GIT"]
 
@@ -989,19 +1094,19 @@ class TestDefaultNormalizer:
 PIPELINE_EXPECTED = {
     "fullstack": (
         ["JAVASCRIPT", "REACT", "NODE_JS", "POSTGRESQL", "GIT"],
-        ["frontend", "frontend", "backend", "database", "vcs"],
+        ["web_language", "frontend", "backend", "database", "vcs"],
     ),
     "ml": (
         ["PYTHON", "PANDAS", "NUMPY", "SCIKIT_LEARN", "TENSORFLOW", "SQL", "GIT"],
-        ["language", "ml", "ml", "ml", "ml", "database", "vcs"],
+        ["language", "data_library", "data_library", "ml_framework", "ml_framework", "database", "vcs"],
     ),
     "devops": (
         ["PYTHON", "DOCKER", "KUBERNETES", "TERRAFORM", "GIT"],
-        ["language", "cloud", "cloud", "cloud", "vcs"],
+        ["language", "container", "orchestration", "iac", "vcs"],
     ),
     "data": (
         ["PYTHON", "SPARK", "AIRFLOW", "POSTGRESQL", "GIT"],
-        ["language", "data", "data", "database", "vcs"],
+        ["language", "data_processing", "workflow", "database", "vcs"],
     ),
 }
 
@@ -1028,11 +1133,10 @@ class TestNormalizationOfExtractedSkills:
         names = normalize_with_report(extract_resume(fullstack_text).raw_skills).canonical_names
         assert set(names) == {"JAVASCRIPT", "REACT", "NODE_JS", "POSTGRESQL", "GIT"}
 
-    def test_sql_alone_is_normalized_even_though_stage_1_pattern_ignores_it(self, ml_text):
-        # DATABASE_PATTERN does not match a bare "SQL", but the skills section is split
-        # by commas, so the token reaches Stage 2 and the database transducer accepts it.
-        raw_skills = extract_resume(ml_text).raw_skills
-        assert "SQL" in raw_skills
+    def test_sql_is_detected_in_stage_1_and_normalized_in_stage_2(self, ml_text):
+        result = extract_resume(ml_text)
+        assert "SQL" in result.raw_skills
+        assert "SQL" in result.detected_skills["database"]
         assert normalize_skill("SQL") == "SQL"
 
     def test_invalid_resume_normalizes_to_nothing(self, invalid_text):

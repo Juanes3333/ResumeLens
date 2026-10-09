@@ -3,17 +3,16 @@
 Coordinates the finite-state transducers of :mod:`resumelens.normalization.transducers`
 over the raw skill tokens produced by Stage 1 (``RawResumeData.raw_skills``).
 
-Each raw token is offered, in a fixed order, to one transducer per technology family.
-The first transducer that translates the token decides its canonical name and, through
-the family's category table, its category. Tokens that no transducer accepts (unknown
-technologies, misspellings, characters outside the input alphabet) are reported as
-*unrecognized* and never reach the classification stage.
+Each raw token is offered, in a fixed order, to one transducer per technology family
+(Web, AI / data libraries, databases, Cloud / DevOps, version control, programming
+languages and data engineering). The first transducer that translates the token decides
+its canonical name and, through the category table, its category. Tokens that no
+transducer accepts (unknown technologies, misspellings, characters outside the input
+alphabet) are reported as *unrecognized* and never reach the classification stage.
 
-The families defined in ``transducers.py`` are Web, AI / data libraries, databases and
-Cloud / DevOps. Three more families are declared here, with the same
-:func:`~resumelens.normalization.transducers.build_transducer` construction, because the
-supported profiles also need them: version control (``Git``), programming languages
-(``Python`` ...) and data-engineering tools (``Spark``, ``Airflow``).
+The categories follow the qualification lists of the assignment: each bullet of a profile
+("JavaScript or TypeScript", "React, Angular, or Vue", "Pandas or NumPy", ...) is one
+category, so that the sorter can place the skills of each bullet together.
 """
 
 from dataclasses import dataclass, field
@@ -24,73 +23,101 @@ from pyformlang.fst import FST
 
 from resumelens.core.models import SkillRecord
 from resumelens.normalization.transducers import (
-    AI_CANONICAL_FORMS,
     DB_CANONICAL_FORMS,
-    DEVOPS_CANONICAL_FORMS,
+    LANGUAGE_CANONICAL_FORMS,
+    VCS_CANONICAL_FORMS,
     apply_transducer,
-    build_transducer,
     get_ai_transducer,
+    get_data_transducer,
     get_db_transducer,
     get_devops_transducer,
+    get_language_transducer,
+    get_vcs_transducer,
     get_web_transducer,
 )
 
-#: Version-control tools and hosting platforms, all normalized to ``GIT``.
-VCS_VARIANTS: Mapping[str, Tuple[str, ...]] = {
-    "GIT": ("Git", "GitHub", "GitLab"),
-}
+#: Category names (values of ``SkillRecord.category``).
+CATEGORY_WEB_LANGUAGE: str = "web_language"
+CATEGORY_FRONTEND: str = "frontend"
+CATEGORY_BACKEND: str = "backend"
+CATEGORY_API: str = "api"
+CATEGORY_DATA_LIBRARY: str = "data_library"
+CATEGORY_ML_FRAMEWORK: str = "ml_framework"
+CATEGORY_ML_PRACTICE: str = "ml_practice"
+CATEGORY_DATABASE: str = "database"
+CATEGORY_CONTAINER: str = "container"
+CATEGORY_ORCHESTRATION: str = "orchestration"
+CATEGORY_IAC: str = "iac"
+CATEGORY_CI_CD: str = "ci_cd"
+CATEGORY_CLOUD: str = "cloud"
+CATEGORY_VCS: str = "vcs"
+CATEGORY_LANGUAGE: str = "language"
+CATEGORY_DATA_PROCESSING: str = "data_processing"
+CATEGORY_WORKFLOW: str = "workflow"
 
-#: General-purpose programming languages recognized by the Stage 1 skill bank.
-#: ``JavaScript`` and ``TypeScript`` belong to the Web transducer.
-LANGUAGE_VARIANTS: Mapping[str, Tuple[str, ...]] = {
-    "PYTHON": ("Python", "Python3"),
-    "JAVA": ("Java",),
-    "C": ("C",),
-    "C_PLUS_PLUS": ("C++", "CPP"),
-    "C_SHARP": ("C#", "CSharp"),
-    "GO": ("Go", "Golang"),
-    "RUST": ("Rust",),
-    "KOTLIN": ("Kotlin",),
-    "SWIFT": ("Swift",),
-    "PHP": ("PHP",),
-    "RUBY": ("Ruby",),
-}
-
-#: Data-engineering tools.
-DATA_VARIANTS: Mapping[str, Tuple[str, ...]] = {
-    "SPARK": ("Spark", "Apache Spark", "PySpark"),
-    "AIRFLOW": ("Airflow", "Apache Airflow"),
-}
+#: Every category, in no particular order.
+CATEGORIES: Tuple[str, ...] = (
+    CATEGORY_WEB_LANGUAGE,
+    CATEGORY_FRONTEND,
+    CATEGORY_BACKEND,
+    CATEGORY_API,
+    CATEGORY_DATA_LIBRARY,
+    CATEGORY_ML_FRAMEWORK,
+    CATEGORY_ML_PRACTICE,
+    CATEGORY_DATABASE,
+    CATEGORY_CONTAINER,
+    CATEGORY_ORCHESTRATION,
+    CATEGORY_IAC,
+    CATEGORY_CI_CD,
+    CATEGORY_CLOUD,
+    CATEGORY_VCS,
+    CATEGORY_LANGUAGE,
+    CATEGORY_DATA_PROCESSING,
+    CATEGORY_WORKFLOW,
+)
 
 #: Category of each canonical name produced by the Web transducer.
 WEB_CATEGORIES: Mapping[str, str] = {
-    "JAVASCRIPT": "frontend",
-    "TYPESCRIPT": "frontend",
-    "REACT": "frontend",
-    "ANGULAR": "frontend",
-    "VUE": "frontend",
-    "NODE_JS": "backend",
-    "SPRING_BOOT": "backend",
-    "DJANGO": "backend",
+    "JAVASCRIPT": CATEGORY_WEB_LANGUAGE,
+    "TYPESCRIPT": CATEGORY_WEB_LANGUAGE,
+    "REACT": CATEGORY_FRONTEND,
+    "ANGULAR": CATEGORY_FRONTEND,
+    "VUE": CATEGORY_FRONTEND,
+    "NODE_JS": CATEGORY_BACKEND,
+    "SPRING_BOOT": CATEGORY_BACKEND,
+    "DJANGO": CATEGORY_BACKEND,
+    "REST_API": CATEGORY_API,
 }
 
+#: Category of each canonical name produced by the AI transducer.
+AI_CATEGORIES: Mapping[str, str] = {
+    "PANDAS": CATEGORY_DATA_LIBRARY,
+    "NUMPY": CATEGORY_DATA_LIBRARY,
+    "MATPLOTLIB": CATEGORY_DATA_LIBRARY,
+    "SCIKIT_LEARN": CATEGORY_ML_FRAMEWORK,
+    "TENSORFLOW": CATEGORY_ML_FRAMEWORK,
+    "PYTORCH": CATEGORY_ML_FRAMEWORK,
+    "KERAS": CATEGORY_ML_FRAMEWORK,
+    "ML_MODEL_DEVELOPMENT": CATEGORY_ML_PRACTICE,
+}
 
-@lru_cache(maxsize=1)
-def get_vcs_transducer() -> FST:
-    """Return the shared version-control transducer, built on first use."""
-    return build_transducer(VCS_VARIANTS)
+#: Category of each canonical name produced by the Cloud / DevOps transducer.
+DEVOPS_CATEGORIES: Mapping[str, str] = {
+    "DOCKER": CATEGORY_CONTAINER,
+    "KUBERNETES": CATEGORY_ORCHESTRATION,
+    "TERRAFORM": CATEGORY_IAC,
+    "ANSIBLE": CATEGORY_IAC,
+    "JENKINS": CATEGORY_CI_CD,
+    "AWS": CATEGORY_CLOUD,
+    "AZURE": CATEGORY_CLOUD,
+    "GCP": CATEGORY_CLOUD,
+}
 
-
-@lru_cache(maxsize=1)
-def get_language_transducer() -> FST:
-    """Return the shared programming-language transducer, built on first use."""
-    return build_transducer(LANGUAGE_VARIANTS)
-
-
-@lru_cache(maxsize=1)
-def get_data_transducer() -> FST:
-    """Return the shared data-engineering transducer, built on first use."""
-    return build_transducer(DATA_VARIANTS)
+#: Category of each canonical name produced by the data-engineering transducer.
+DATA_CATEGORIES: Mapping[str, str] = {
+    "SPARK": CATEGORY_DATA_PROCESSING,
+    "AIRFLOW": CATEGORY_WORKFLOW,
+}
 
 
 @dataclass(frozen=True)
@@ -117,12 +144,14 @@ def _uniform(canonical_names: Iterable[str], category: str) -> Dict[str, str]:
 #: the order only affects speed, never the result.
 DEFAULT_FAMILIES: Tuple[TechnologyFamily, ...] = (
     TechnologyFamily("web", get_web_transducer, WEB_CATEGORIES),
-    TechnologyFamily("ai", get_ai_transducer, _uniform(AI_CANONICAL_FORMS, "ml")),
-    TechnologyFamily("database", get_db_transducer, _uniform(DB_CANONICAL_FORMS, "database")),
-    TechnologyFamily("devops", get_devops_transducer, _uniform(DEVOPS_CANONICAL_FORMS, "cloud")),
-    TechnologyFamily("vcs", get_vcs_transducer, _uniform(VCS_VARIANTS, "vcs")),
-    TechnologyFamily("language", get_language_transducer, _uniform(LANGUAGE_VARIANTS, "language")),
-    TechnologyFamily("data", get_data_transducer, _uniform(DATA_VARIANTS, "data")),
+    TechnologyFamily("ai", get_ai_transducer, AI_CATEGORIES),
+    TechnologyFamily("database", get_db_transducer, _uniform(DB_CANONICAL_FORMS, CATEGORY_DATABASE)),
+    TechnologyFamily("devops", get_devops_transducer, DEVOPS_CATEGORIES),
+    TechnologyFamily("vcs", get_vcs_transducer, _uniform(VCS_CANONICAL_FORMS, CATEGORY_VCS)),
+    TechnologyFamily(
+        "language", get_language_transducer, _uniform(LANGUAGE_CANONICAL_FORMS, CATEGORY_LANGUAGE)
+    ),
+    TechnologyFamily("data", get_data_transducer, DATA_CATEGORIES),
 )
 
 

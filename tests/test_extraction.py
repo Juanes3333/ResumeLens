@@ -15,22 +15,13 @@ from resumelens.extraction import (
     extract_name,
     extract_resume,
     extract_skills,
+    extract_technologies,
     split_sections,
 )
 from resumelens.extraction import patterns as p
 from tests.conftest import VALID_ALIASES
 
-SKILL_PATTERNS = {
-    name: p.PATTERNS[name]
-    for name in (
-        "programming_language",
-        "framework",
-        "ml_library",
-        "database",
-        "version_control",
-        "devops_cloud",
-    )
-}
+SKILL_PATTERNS = p.SKILL_PATTERNS
 
 
 def skills_found(pattern, text):
@@ -132,7 +123,13 @@ def test_contact_links_drop_trailing_punctuation_and_duplicates():
 
 
 def test_contact_without_data_returns_empty_values():
-    assert extract_contact("nothing useful here") == {"email": "", "phone": "", "links": []}
+    assert extract_contact("nothing useful here") == {
+        "email": "",
+        "phone": "",
+        "links": [],
+        "linkedin": "",
+        "github": "",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -153,13 +150,6 @@ def test_extract_name(text, expected):
     assert extract_name(text) == expected
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Known limitation: the name pattern only accepts the letters A-Za-z, so names "
-        "with accents (common in Spanish) are not recognized."
-    ),
-    strict=False,
-)
 @pytest.mark.parametrize("name", ["Ana María Gómez", "José Núñez"])
 def test_extract_name_accepts_accented_names(name):
     assert extract_name(f"{name}\n\nContact:\n") == name
@@ -372,13 +362,6 @@ def test_skill_patterns_isolate_only_the_skill_from_a_sentence():
     }
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Known limitation: PROGRAMMING_LANGUAGE_PATTERN uses (?<!\\w), so the 'js' inside "
-        "'Node.js' / 'React.js' is also reported as a programming language."
-    ),
-    strict=False,
-)
 @pytest.mark.parametrize("text", ["Node.js", "React.js", "Vue.js"])
 def test_language_pattern_does_not_split_dotted_framework_names(text):
     assert skills_found(p.PROGRAMMING_LANGUAGE_PATTERN, text) == []
@@ -480,7 +463,7 @@ def test_individual_extractors_agree_with_extract_resume(resume_texts, alias):
     assert result.candidate_info.name == extract_name(text)
 
 
-@pytest.mark.parametrize("alias", ["fullstack", "devops"])
+@pytest.mark.parametrize("alias", VALID_ALIASES)
 def test_fixture_skill_tokens_are_each_recognized_by_a_skill_pattern(resume_texts, alias):
     for token in extract_skills(resume_texts[alias]):
         assert any(pattern.fullmatch(token) for pattern in SKILL_PATTERNS.values()), token
@@ -546,3 +529,109 @@ def test_extract_resume_on_synthetic_text():
         "Backend Developer, Globant (Jan 2021 - Present)",
     ]
     assert result.raw_skills == ["C++", ".NET", "Node.js", "js", "REACT", "sklearn", "Git"]
+
+
+# ---------------------------------------------------------------------------
+# Skill regex bank over the whole resume — extract_technologies
+# ---------------------------------------------------------------------------
+EXPECTED_TECHNOLOGIES = {
+    "fullstack": {
+        "programming_language": ["JS"],
+        "framework": ["React.js", "NodeJS"],
+        "database": ["Postgres"],
+        "api": ["REST API"],
+        "version_control": ["Git"],
+    },
+    "ml": {
+        "programming_language": ["Python"],
+        "ml_library": ["Pandas", "NumPy", "Scikit-learn", "TensorFlow"],
+        "database": ["SQL"],
+        "version_control": ["Git"],
+    },
+    "devops": {
+        "programming_language": ["Python"],
+        "version_control": ["Git"],
+        "devops_cloud": ["Docker", "Kubernetes", "Terraform"],
+    },
+    "data": {
+        "programming_language": ["Python"],
+        "database": ["PostgreSQL"],
+        "data_tool": ["Apache Spark", "Airflow"],
+        "version_control": ["Git"],
+    },
+}
+
+
+@pytest.mark.parametrize("alias", VALID_ALIASES)
+def test_technologies_detected_on_fixtures(resume_texts, alias):
+    assert extract_technologies(resume_texts[alias]) == EXPECTED_TECHNOLOGIES[alias]
+
+
+@pytest.mark.parametrize("alias", VALID_ALIASES)
+def test_extract_resume_keeps_detected_technologies(resume_texts, alias):
+    result = extract_resume(resume_texts[alias])
+    assert result.detected_skills == extract_technologies(resume_texts[alias])
+
+
+def test_technologies_ignore_contact_labels_and_urls():
+    text = contact_block("GitHub: https://github.com/ana", "Email: ana@git.io") + "Summary:\nNo tools.\n"
+    assert extract_technologies(text) == {}
+
+
+def test_technologies_are_unique_ignoring_case_and_keep_first_spelling():
+    text = "Experience:\nUsed git and Git, then GIT with python and Python.\n"
+    assert extract_technologies(text) == {
+        "programming_language": ["python"],
+        "version_control": ["git"],
+    }
+
+
+def test_technologies_are_reported_in_bank_order_by_type():
+    text = "Summary:\nGit, Docker, Python, REST APIs and Machine-learning model development.\n"
+    assert list(extract_technologies(text)) == [
+        "programming_language",
+        "ml_practice",
+        "api",
+        "version_control",
+        "devops_cloud",
+    ]
+
+
+def test_invalid_resume_has_no_detected_technologies(invalid_text):
+    assert extract_technologies(invalid_text) == {}
+    assert extract_resume(invalid_text).detected_skills == {}
+
+
+# ---------------------------------------------------------------------------
+# Contact — profile links by kind
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("alias", VALID_ALIASES)
+def test_contact_reports_linkedin_and_github_profiles(resume_texts, alias):
+    contact = extract_contact(resume_texts[alias])
+    assert contact["linkedin"].startswith("https://www.linkedin.com/in/")
+    assert contact["github"].startswith("https://github.com/")
+    assert contact["linkedin"] in contact["links"] and contact["github"] in contact["links"]
+
+
+def test_contact_without_profiles_leaves_them_empty():
+    contact = extract_contact(contact_block("Web: https://ana.dev"))
+    assert contact["links"] == ["https://ana.dev"]
+    assert contact["linkedin"] == "" and contact["github"] == ""
+
+
+# ---------------------------------------------------------------------------
+# Education — only lines recognized by the education patterns are kept
+# ---------------------------------------------------------------------------
+def test_education_drops_lines_without_degree_institution_or_period():
+    text = (
+        "Education:\nB.S. in Computer Science\nNevermore University (2019 - 2023)\n"
+        "I enjoyed the campus a lot\n"
+    )
+    assert extract_education(text) == [
+        "B.S. in Computer Science",
+        "Nevermore University (2019 - 2023)",
+    ]
+
+
+def test_education_keeps_a_line_with_only_a_period():
+    assert extract_education("Education:\nBootcamp (2020 - 2021)\n") == ["Bootcamp (2020 - 2021)"]

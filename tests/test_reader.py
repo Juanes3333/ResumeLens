@@ -1,4 +1,4 @@
-"""Pruebas de la ingesta (`read_resume_file`) y de los modelos de dominio."""
+"""Tests of the ingestion (`read_resume_file`) and of the domain models."""
 
 from dataclasses import is_dataclass
 
@@ -17,7 +17,7 @@ from tests.conftest import RESUME_FILES, VALID_ALIASES
 
 @pytest.mark.parametrize("alias", list(RESUME_FILES))
 def test_read_resume_file_reads_each_synthetic_file(resume_paths, alias):
-    """Cada CV sintético se lee sin lanzar errores y retorna texto limpio."""
+    """Each synthetic resume is read without errors and returns clean text."""
     text = read_resume_file(resume_paths[alias])
     assert isinstance(text, str)
     assert text.strip()
@@ -70,8 +70,8 @@ def test_raw_resume_factory_wraps_text(raw_resume_factory, fullstack_text):
 
 
 def test_missing_file_raises(tmp_path):
-    with pytest.raises(FileNotFoundError, match="no_existe"):
-        read_resume_file(tmp_path / "no_existe.txt")
+    with pytest.raises(FileNotFoundError, match="missing_resume"):
+        read_resume_file(tmp_path / "missing_resume.txt")
 
 
 def test_normalizes_newlines_and_nulls(tmp_path):
