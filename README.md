@@ -1,18 +1,18 @@
 # ResumeLens: Formal Language-Based Resume Screening
 
-Proyecto integrador de **Computación y Estructuras Discretas III (2026-2)**, Universidad Icesi.
-Profesor: Andrés Aristizábal.
+Integrative project of **Computación y Estructuras Discretas III (2026-2)**, Universidad Icesi.
+Professor: Andrés Aristizábal.
 
-**Integrantes:** Juan Restrepo, Samuel Granda, Daniel Varela.
+**Members:** Juan Restrepo, Samuel Granda, Daniel Varela.
 
-## Pipeline formal de 4 etapas
+## Formal pipeline in 4 stages
 
-1. **Regex** — extracción de campos (contacto, fechas, habilidades) del texto crudo del currículum.
-2. **FST** (transductores de estado finito) — normalización de los datos extraídos.
-3. **Autómatas** (`pyformlang`) — clasificación y validación de habilidades/secciones.
-4. **textX DSL** — gramática para definir reglas de evaluación de candidatos.
+1. **Regex** — extraction of fields (contact, education, experience, skills) from the raw text of the resume.
+2. **FST** (finite-state transducers, `pyformlang`) — normalization of the skills to their canonical form and canonical ordering by profile.
+3. **Finite automata** (`pyformlang`) — recognition of the qualification pattern of each profile (ACCEPTED / REJECTED).
+4. **textX DSL** — context-free grammar that represents and validates the candidate's resulting profile (data, skills and accepted profiles), and its HTML/Markdown visualization.
 
-## Estructura
+## Structure
 
 ```
 resumelens/
@@ -20,7 +20,7 @@ resumelens/
 docs/  tests/  data/input_resumes/  data/templates/
 ```
 
-## Configuración del entorno
+## Environment setup
 
 ```bash
 python -m venv .venv
@@ -30,4 +30,4 @@ pip install -r requirements.txt
 pytest
 ```
 
-Dependencias autorizadas: `pyformlang`, `textx`, `pytest`, `pydot`.
+Authorized dependencies: `pyformlang`, `textx`, `pytest`, `pydot`.

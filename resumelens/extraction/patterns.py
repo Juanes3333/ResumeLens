@@ -1,8 +1,7 @@
 """Stage 1 — Regular-expression patterns for ResumeLens.
 
-This module only *defines and compiles* the patterns (``re.compile``). The logic of the
-full extractor (orchestrating the patterns and building ``RawResumeData``) belongs to a
-later commit.
+This module only *defines and compiles* the patterns (``re.compile``); the extractor
+(:mod:`resumelens.extraction.extractor`) applies them to the text of a resume.
 
 Each pattern documents the language of strings it recognizes. All of them use named
 groups ``(?P<name>...)`` so that the consumer can read the result with ``.groupdict()``.
@@ -131,16 +130,20 @@ EDUCATION_ENTRY_PATTERN: Pattern[str] = re.compile(
     r"\((?:" + _RANGE + r"|(?P<graduation>" + _YEAR + r"))\)",
     re.MULTILINE | re.IGNORECASE,
 )
+
 # ---------------------------------------------------------------------------
 # 4. TECHNICAL SKILLS
 # ---------------------------------------------------------------------------
 
 #: Programming languages commonly used in the supported professional profiles.
-#: The language recognizes canonical names and common textual variants.
+#: The language recognizes canonical names and common textual variants, ignoring case.
+#: ``Go`` and ``C`` / ``C++`` / ``C#`` are case-sensitive (``(?-i:...)``) so that the
+#: English word "go" or a stray letter "c" in free text are not reported as languages.
+#: The look-behind ``(?<![\w.])`` rejects the ``js`` of ``Node.js`` / ``React.js``.
 PROGRAMMING_LANGUAGE_PATTERN: Pattern[str] = re.compile(
-    r"(?<!\w)(?P<skill>"
-    r"Python|JavaScript|Javascript|JS|TypeScript|Typescript|TS|"
-r"Java|C\+\+|C#|C(?![+#])|Go|Golang|Rust|Kotlin|Swift|PHP|Ruby"
+    r"(?<![\w.])(?P<skill>"
+    r"Python|JavaScript|JS|TypeScript|TS|Java|Golang|Rust|Kotlin|Swift|PHP|Ruby|"
+    r"(?-i:Go|C\+\+|C#|C(?![+#]))"
     r")(?!\w)",
     re.IGNORECASE,
 )
@@ -158,17 +161,19 @@ FRAMEWORK_PATTERN: Pattern[str] = re.compile(
 #: Machine-learning and data-processing libraries relevant to ResumeLens.
 ML_LIBRARY_PATTERN: Pattern[str] = re.compile(
     r"\b(?P<skill>"
-    r"Pandas|NumPy|Numpy|Scikit[- ]learn|sklearn|"
+    r"Pandas|NumPy|Scikit[- ]learn|sklearn|Keras|Matplotlib|"
     r"TensorFlow|Tensor[ \t]+Flow|PyTorch|Py[ \t]+Torch"
     r")\b",
     re.IGNORECASE,
 )
 
-#: Relational and NoSQL database technologies.
+#: Relational and NoSQL database technologies, plus the query language ``SQL`` and the
+#: generic term ``NoSQL``. ``\b`` keeps the ``SQL`` inside ``MySQL`` / ``PostgreSQL``
+#: from being reported on its own.
 DATABASE_PATTERN: Pattern[str] = re.compile(
     r"\b(?P<skill>"
     r"PostgreSQL|Postgres|MySQL|MariaDB|Oracle|SQLite|"
-    r"SQL[ \t]+Server|MongoDB|Mongo|Redis|Cassandra"
+    r"SQL[ \t]+Server|MongoDB|Mongo|Redis|Cassandra|NoSQL|SQL"
     r")\b",
     re.IGNORECASE,
 )
@@ -191,6 +196,34 @@ DEVOPS_CLOUD_PATTERN: Pattern[str] = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+#: Data-engineering tools (distributed processing and workflow orchestration).
+#: E.g.: ``Apache Spark``, ``PySpark``, ``Airflow``.
+DATA_TOOL_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"(?:Apache[ \t]+)?Spark|PySpark|(?:Apache[ \t]+)?Airflow"
+    r")\b",
+    re.IGNORECASE,
+)
+
+#: REST web APIs. Case-sensitive on purpose: ``REST`` / ``RESTful`` are acronyms, while
+#: the English word "rest" must not be captured.
+#: E.g.: ``REST``, ``REST API``, ``REST APIs``, ``RESTful APIs``.
+API_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>REST(?:ful)?(?:[ \t]+APIs?)?)\b"
+)
+
+#: Machine-learning practice listed by the Machine Learning Engineer profile.
+#: E.g.: ``Machine-learning model development``, ``ML model development``,
+#: ``machine learning``. The job title ``Machine Learning Engineer`` is not a practice,
+#: so a following ``Engineer`` is rejected by the look-ahead.
+ML_PRACTICE_PATTERN: Pattern[str] = re.compile(
+    r"\b(?P<skill>"
+    r"Machine[- ]learning(?:[ \t]+model[ \t]+development)?|ML[ \t]+model[ \t]+development"
+    r")\b(?![ \t]+Engineer)",
+    re.IGNORECASE,
+)
+
 # ---------------------------------------------------------------------------
 # 5. CAREER / EXPERIENCE
 # ---------------------------------------------------------------------------
@@ -217,7 +250,36 @@ EXPERIENCE_ENTRY_PATTERN: Pattern[str] = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 
-#: Registry of all patterns by name (useful for tests and for the extractor).
+# ---------------------------------------------------------------------------
+# 6. CANDIDATE NAME AND SKILL LIST
+# ---------------------------------------------------------------------------
+
+#: Candidate name on its own line: 2 to 4 words, each starting with an upper-case letter
+#: (accented capitals included) and followed by letters of any alphabet (``[^\W\d_]``),
+#: apostrophes, dots or hyphens. E.g.: ``Mary Jane Watson``, ``José Núñez``,
+#: ``WEDNESDAY ADDAMS``. ``juan perez`` is not in the language.
+NAME_PATTERN: Pattern[str] = re.compile(
+    r"^(?P<name>[A-ZÁÉÍÓÚÑÜ](?:[^\W\d_]|['’.-])*"
+    r"(?:[ \t]+[A-ZÁÉÍÓÚÑÜ](?:[^\W\d_]|['’.-])*){1,3})$"
+)
+
+#: Separator of the items of a skill list: comma, semicolon or line break. It is a
+#: delimiter, not an extraction pattern, so it is not part of :data:`PATTERNS`.
+SKILL_SEPARATOR_PATTERN: Pattern[str] = re.compile(r"[,;\n]")
+#: Technical-skill patterns by type, in the order the extractor reports them.
+SKILL_PATTERNS: Dict[str, Pattern[str]] = {
+    "programming_language": PROGRAMMING_LANGUAGE_PATTERN,
+    "framework": FRAMEWORK_PATTERN,
+    "ml_library": ML_LIBRARY_PATTERN,
+    "ml_practice": ML_PRACTICE_PATTERN,
+    "database": DATABASE_PATTERN,
+    "data_tool": DATA_TOOL_PATTERN,
+    "api": API_PATTERN,
+    "version_control": VERSION_CONTROL_PATTERN,
+    "devops_cloud": DEVOPS_CLOUD_PATTERN,
+}
+
+#: Registry of all extraction patterns by name (useful for tests and for the extractor).
 PATTERNS: Dict[str, Pattern[str]] = {
     "email": EMAIL_PATTERN,
     "phone": PHONE_PATTERN,
@@ -237,4 +299,8 @@ PATTERNS: Dict[str, Pattern[str]] = {
     "devops_cloud": DEVOPS_CLOUD_PATTERN,
     "years_experience": YEARS_EXPERIENCE_PATTERN,
     "experience_entry": EXPERIENCE_ENTRY_PATTERN,
+    "data_tool": DATA_TOOL_PATTERN,
+    "api": API_PATTERN,
+    "ml_practice": ML_PRACTICE_PATTERN,
+    "name": NAME_PATTERN,
 }
