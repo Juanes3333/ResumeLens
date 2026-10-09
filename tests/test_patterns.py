@@ -76,7 +76,7 @@ VALID = list(EXPECTED)
 # Pattern registry
 # ---------------------------------------------------------------------------
 def test_all_patterns_are_compiled():
-    assert len(p.PATTERNS) == 18
+    assert len(p.PATTERNS) == 22
     assert all(isinstance(pat, re.Pattern) for pat in p.PATTERNS.values())
 
 
@@ -456,3 +456,85 @@ def test_experience_on_fixtures(resume_texts, alias):
 @pytest.mark.parametrize("name", list(p.PATTERNS))
 def test_invalid_resume_yields_no_matches(invalid_text, name):
     assert p.PATTERNS[name].search(invalid_text) is None
+
+
+# ---------------------------------------------------------------------------
+# Skill bank additions: data tools, REST APIs, ML practice, SQL / NoSQL
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "pattern, text, expected",
+    [
+        (p.DATA_TOOL_PATTERN, "Apache Spark, PySpark and Airflow", ["Apache Spark", "PySpark", "Airflow"]),
+        (p.DATA_TOOL_PATTERN, "spark and apache airflow", ["spark", "apache airflow"]),
+        (p.API_PATTERN, "REST, REST API, REST APIs and RESTful APIs", ["REST", "REST API", "REST APIs", "RESTful APIs"]),
+        (p.ML_PRACTICE_PATTERN, "Machine-learning model development", ["Machine-learning model development"]),
+        (p.ML_PRACTICE_PATTERN, "ML model development and machine learning", ["ML model development", "machine learning"]),
+        (p.DATABASE_PATTERN, "SQL, NoSQL, MySQL and PostgreSQL", ["SQL", "NoSQL", "MySQL", "PostgreSQL"]),
+        (p.ML_LIBRARY_PATTERN, "Keras and Matplotlib", ["Keras", "Matplotlib"]),
+    ],
+)
+def test_new_skill_patterns_match(pattern, text, expected):
+    assert [m["skill"] for m in pattern.finditer(text)] == expected
+
+
+@pytest.mark.parametrize(
+    "pattern, text",
+    [
+        (p.API_PATTERN, "I took the rest of the day off"),  # "rest" is an English word
+        (p.API_PATTERN, "RESTORE the backup"),
+        (p.ML_PRACTICE_PATTERN, "Machine Learning Engineer, Oscorp (2024 - 2026)"),  # job title
+        (p.DATABASE_PATTERN, "SQLAlchemy and PostgreSQLite"),
+        (p.DATA_TOOL_PATTERN, "sparkling water"),
+    ],
+)
+def test_new_skill_patterns_reject(pattern, text):
+    assert pattern.search(text) is None
+
+
+def test_sql_inside_another_database_name_is_not_reported_twice():
+    assert [m["skill"] for m in p.DATABASE_PATTERN.finditer("MySQL")] == ["MySQL"]
+
+
+@pytest.mark.parametrize("text", ["Let's go home", "plan c", "Plan C."])
+def test_case_sensitive_short_languages_ignore_free_text(text):
+    found = [m["skill"] for m in p.PROGRAMMING_LANGUAGE_PATTERN.finditer(text)]
+    assert "go" not in found and "c" not in found
+    if text == "Plan C.":
+        assert found == ["C"]  # the capital letter alone is still the language C
+
+
+def test_skill_patterns_registry_lists_every_skill_type():
+    assert set(p.SKILL_PATTERNS) == {
+        "programming_language",
+        "framework",
+        "ml_library",
+        "ml_practice",
+        "database",
+        "data_tool",
+        "api",
+        "version_control",
+        "devops_cloud",
+    }
+    assert all(p.PATTERNS[name] is pattern for name, pattern in p.SKILL_PATTERNS.items())
+
+
+# ---------------------------------------------------------------------------
+# Candidate name and skill separator
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "line", ["Mary Jane Watson", "WEDNESDAY ADDAMS", "José Núñez", "Ana María Gómez", "Seán O'Brien"]
+)
+def test_name_pattern_accepts(line):
+    assert p.NAME_PATTERN.match(line)["name"] == line
+
+
+@pytest.mark.parametrize(
+    "line", ["juan perez", "Ana", "Ana Maria Gomez Perez Ruiz", "Contact:", "Peter Parker 2"]
+)
+def test_name_pattern_rejects(line):
+    assert p.NAME_PATTERN.match(line) is None
+
+
+def test_skill_separator_splits_on_comma_semicolon_and_newline():
+    assert p.SKILL_SEPARATOR_PATTERN.split("a,b;c\nd") == ["a", "b", "c", "d"]
+    assert "separator" not in p.PATTERNS  # a delimiter, not an extraction pattern

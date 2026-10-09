@@ -1,7 +1,7 @@
-"""Fixtures compartidas de pytest para ResumeLens.
+"""Shared pytest fixtures for ResumeLens.
 
-Cargan en memoria los currículums sintéticos de ``data/input_resumes/`` usando
-``read_resume_file`` (contrato de la etapa de ingesta).
+They load the synthetic resumes of ``data/input_resumes/`` into memory using
+``read_resume_file`` (contract of the ingestion stage).
 """
 
 from pathlib import Path
@@ -14,7 +14,7 @@ from resumelens.core.reader import read_resume_file
 
 RESUMES_DIR = Path(__file__).resolve().parent.parent / "data" / "input_resumes"
 
-# Alias lógico -> nombre de archivo.
+# Logical alias -> file name.
 RESUME_FILES: Dict[str, str] = {
     "fullstack": "resume_fullstack.txt",
     "ml": "resume_ml.txt",
@@ -27,25 +27,25 @@ VALID_ALIASES = ("fullstack", "ml", "devops", "data")
 
 @pytest.fixture(scope="session")
 def resumes_dir() -> Path:
-    """Directorio con los CVs sintéticos."""
+    """Directory with the synthetic resumes."""
     return RESUMES_DIR
 
 
 @pytest.fixture(scope="session")
 def resume_paths(resumes_dir) -> Dict[str, Path]:
-    """Mapa alias -> ruta de cada CV sintético."""
+    """Map alias -> path of each synthetic resume."""
     return {alias: resumes_dir / name for alias, name in RESUME_FILES.items()}
 
 
 @pytest.fixture(scope="session")
 def resume_texts(resume_paths) -> Dict[str, str]:
-    """Mapa alias -> texto completo del CV, cargado en memoria."""
+    """Map alias -> full resume text, loaded in memory."""
     return {alias: read_resume_file(path) for alias, path in resume_paths.items()}
 
 
 @pytest.fixture(scope="session")
 def valid_resume_texts(resume_texts) -> Dict[str, str]:
-    """Solo los CVs bien formados (fullstack, ml, devops, data)."""
+    """Only the well-formed resumes (fullstack, ml, devops, data)."""
     return {alias: resume_texts[alias] for alias in VALID_ALIASES}
 
 
@@ -76,7 +76,7 @@ def invalid_text(resume_texts) -> str:
 
 @pytest.fixture
 def raw_resume_factory(resume_texts):
-    """Construye un ``RawResumeData`` a partir del alias de un CV."""
+    """Build a ``RawResumeData`` from the alias of a resume."""
 
     def _make(alias: str) -> RawResumeData:
         return RawResumeData(raw_text=resume_texts[alias])
