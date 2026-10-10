@@ -9,11 +9,11 @@ states the mathematical object first and then maps it to the code that implement
 | 1 | Extraction | Regular expressions (regular languages) | included |
 | 2 | Normalization | Finite-state transducers (7-tuples) | included |
 | 3 | Classification | Finite automata (5-tuples) | included |
-| 4 | Candidate profile language | Context-free grammar (EBNF) | pending — not present in either source file |
+| 4 | Candidate profile language | Context-free grammar (EBNF, textX) | included |
 
 This document combines the detailed formal specification of Stage 1, the normalization
-model of Stage 2 and the profile automata of Stage 3. The formal specification of Stage 4 is
-still pending rather than invented.
+model of Stage 2, the profile automata of Stage 3 and the context-free grammar of the
+candidate profile language of Stage 4.
 
 ---
 
@@ -1235,3 +1235,435 @@ The order of the stages is the order of the slots of the sorter (`PROFILE_SLOTS`
 Section 2.6), stage by stage, so a sequence sorted by `sort_by_profile` for profile P is
 already in the order that the automaton of P reads: the profile part first and the noise after
 it. The automata and their examples are verified by `tests/test_classification.py`.
+
+---
+
+## Section 4. Context-free grammar of the candidate profile language (Stage 4)
+
+Stage 4 (`resumelens/grammar/`) defines the domain-specific language (DSL) in which the
+result of the first three stages is written down: one document describes **one candidate**,
+with the contact data of Stage 1, the normalized skills of Stage 2 and one formal verdict
+for each of the four profiles of Stage 3. The language is specified by the textX grammar
+`resumelens/grammar/resume_grammar.tx` (source of truth of this section). `parser.py`
+writes a document from the pipeline data, loads the metamodel with
+`textx.metamodel_from_file` and checks that a document belongs to the language
+(Section 4.10). The DSL only reports verdicts: it does not rank candidates.
+
+### 4.1 Definition
+
+A context-free grammar (CFG) is the 4-tuple $`G = (V, \Sigma, S, P)`$, where:
+
+| Component | Meaning |
+|---|---|
+| $`V`$ | Finite set of variables (non-terminal symbols) |
+| $`\Sigma`$ | Finite set of terminal symbols, with $`V \cap \Sigma = \varnothing`$ |
+| $`S \in V`$ | Start symbol (distinguished variable) |
+| $`P`$ | Finite set of productions $`A \to \alpha`$, with $`A \in V`$ and $`\alpha \in (V \cup \Sigma)^{*}`$ |
+
+The relation $`\alpha A \beta \Rightarrow \alpha \gamma \beta`$ holds when $`A \to \gamma \in P`$;
+$`\Rightarrow^{*}`$ is its reflexive and transitive closure. The language of the grammar is
+
+```math
+L(G) = \{\, w \in \Sigma^{*} \;:\; S \Rightarrow^{*} w \,\}
+```
+
+A derivation $`S \Rightarrow^{*} w`$ is represented by a **derivation tree** (parse tree):
+the root is $`S`$, each inner node is a variable whose children are the right-hand side of
+the production applied, and the leaves read $`w`$ from left to right.
+
+Conventions of this section. Variables are written $`\mathsf{Sans}`$. Keywords and
+punctuation are written $`\mathtt{typewriter}`$. A *token class* (a terminal that stands
+for a whole regular language, such as an e-mail address) is written $`\mathbf{Bold}`$. As in
+Sections 1 and 2, every token class is the language of a regular expression, so the
+grammar over tokens of this section becomes a grammar over characters by substituting each
+token class by that regular language. Whitespace and comments (Section 4.3) are skipped
+between tokens and are not part of $`\Sigma`$.
+
+### 4.2 EBNF operators and their textX equivalents
+
+The grammar is first stated in classical EBNF (Section 4.5) and then reduced to plain
+productions (Section 4.6). The operators correspond to textX as follows:
+
+| Concept | Classical EBNF | textX (`resume_grammar.tx`) |
+|---|---|---|
+| Sequence | juxtaposition: `A B` | juxtaposition: `A B` |
+| Alternative | `A \| B` | `A \| B` |
+| Option (zero or one) | `[ A ]` | `( A )?` |
+| Repetition (zero or more) | `{ A }` | `( A )*`, or the assignment `attr*=A` |
+| Repetition (one or more) | `A { A }` | `attr+=A` |
+| List with separator | `A { ',' A }` | `attr+=A[',']` |
+| Terminal symbol | `'text'` | `'text'` |
+| Group | `( A )` | `( A )` |
+| Attribute | (not part of the language) | `attr=A`, `attr+=A`, `attr*=A` |
+
+Assignments (`name=...`, `entries*=...`) do not change which strings belong to the language:
+they only tell textX which attribute of the model object receives the matched text
+(Section 4.9). In the EBNF of Section 4.5 the terminals that coincide with EBNF meta-symbols
+(`'['`, `']'`, `'{'`, `'}'`) are always quoted.
+
+### 4.3 Terminal symbols $`\Sigma`$
+
+The grammar has $`|\Sigma| = 36`$ terminal symbols: 24 keywords, 6 punctuation symbols and
+6 token classes. Every literal of the `.tx` file appears in exactly one of the first three
+tables.
+
+**Structural keywords (18).** They open a block or announce a field.
+
+| Group | Keywords |
+|---|---|
+| Document and blocks | `candidate`, `personal`, `education`, `experience`, `skills`, `evaluation` |
+| Personal fields | `name`, `email`, `phone`, `link` |
+| Entries | `study`, `job`, `skill`, `category`, `raw` |
+| Profile results | `profile`, `matched`, `details` |
+
+**Verdict keywords (2) and profile identifiers (4).**
+
+| Class | Terminals |
+|---|---|
+| Verdict | `ACCEPTED`, `REJECTED` |
+| Profile identifier | `FULL_STACK_DEVELOPER`, `MACHINE_LEARNING_ENGINEER`, `DEVOPS_ENGINEER`, `DATA_ENGINEER` |
+
+**Punctuation (6).** `{`, `}`, `:`, `[`, `]`, `,`.
+
+**Token classes (6).** Five are match rules of the grammar (regular expressions, written
+here as in the file) and one is the textX built-in.
+
+| Token class | Language | Example |
+|---|---|---|
+| $`\mathbf{CanonicalName}`$ | `/[A-Z][A-Z0-9_]*/` | `NODE_JS` |
+| $`\mathbf{Category}`$ | `/[a-z][a-z0-9_]*/` | `web_language` |
+| $`\mathbf{Email}`$ | `/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/` | `mj.watson@dailybugle.com` |
+| $`\mathbf{Phone}`$ | `/(\+\d{1,3}[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}/` | `+1 555 666 7777` |
+| $`\mathbf{Url}`$ | `/(?i)https?:\/\/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(\/[\w%~+-]+(\.[\w%~+-]+)*)*/` | `https://github.com/mjwatson` |
+| $`\mathbf{STRING}`$ | textX built-in: a quoted string, which may span several lines; a double quote inside it is written `\"` | `"B.S. in Computer Science"` |
+
+The shapes of $`\mathbf{Email}`$ and $`\mathbf{Url}`$ follow the Stage 1 patterns
+(Section 1.4.1). $`\mathbf{CanonicalName}`$ has the shape of the output alphabet of Stage 2
+(upper-case names such as `JAVASCRIPT` or `SCIKIT_LEARN`, Section 2.4).
+
+**Skipped text (not in $`\Sigma`$).** Whitespace between tokens (textX default) and the
+rule `Comment: /\/\/.*$/`, a comment from `//` to the end of the line.
+
+Some regular languages overlap with keywords: `ACCEPTED` also belongs to
+$`L(\mathbf{CanonicalName})`$ and `name` or `raw` belong to $`L(\mathbf{Category})`$. This
+is not an ambiguity because textX is scannerless: there is no separate lexer that has to
+classify each word, and the parser only tries the terminals that the grammar allows at the
+current position (after `skill` a $`\mathbf{CanonicalName}`$, after `:` in a result a
+verdict, and so on).
+
+### 4.4 Variables $`V`$
+
+The `.tx` file has 21 rules. Six of them are lexical (the five match rules of Section 4.3
+and `Comment`) and are terminal classes here. The other 15 are the variables of the
+grammar:
+
+| Variable | Kind in textX | Productions | Role |
+|---|---|---|---|
+| $`\mathsf{CandidateReport}`$ | object rule, **start symbol** | 1 | Whole document: the five blocks, in this order |
+| $`\mathsf{PersonalInfo}`$ | object rule | 1 | Name (mandatory), e-mail, phone (optional), links (repeated) |
+| $`\mathsf{EducationSection}`$ | object rule | 1 | Zero or more education entries |
+| $`\mathsf{EducationEntry}`$ | object rule | 1 | `study` followed by a string |
+| $`\mathsf{ExperienceSection}`$ | object rule | 1 | Zero or more experience entries |
+| $`\mathsf{ExperienceEntry}`$ | object rule | 1 | `job` followed by a string |
+| $`\mathsf{SkillSection}`$ | object rule | 1 | One or more skill entries |
+| $`\mathsf{SkillEntry}`$ | object rule | 1 | Canonical name, category and raw text of one skill |
+| $`\mathsf{EvaluationSection}`$ | object rule | 1 | The four profile results, in the order of the roadmap |
+| $`\mathsf{FullStackResult}`$ | object rule | 1 | Verdict of the Full Stack Developer automaton |
+| $`\mathsf{MachineLearningResult}`$ | object rule | 1 | Verdict of the Machine Learning Engineer automaton |
+| $`\mathsf{DevOpsResult}`$ | object rule | 1 | Verdict of the DevOps Engineer automaton |
+| $`\mathsf{DataEngineerResult}`$ | object rule | 1 | Verdict of the Data Engineer automaton |
+| $`\mathsf{ProfileResult}`$ | abstract rule | 4 | Common type of the four results (see below) |
+| $`\mathsf{Verdict}`$ | match rule | 2 | `ACCEPTED` or `REJECTED` |
+
+$`\mathsf{Verdict}`$ is a variable here because it is a choice between two terminals;
+textX treats it as a match rule, so it does not create an object but a string attribute.
+
+$`\mathsf{ProfileResult}`$ is an abstract rule that declares the common type of the four
+result classes in the metamodel. No other rule refers to it: $`\mathsf{EvaluationSection}`$
+uses the four concrete rules directly. In grammar terms it is an **unreachable** variable
+(no derivation from $`S`$ uses it); it is kept in $`V`$ and $`P`$ because it is in the
+file, and it does not change $`L(G)`$.
+
+Repetition and optional parts are not variables in EBNF, but plain productions need them.
+Section 4.6 adds 10 **auxiliary variables**, so $`|V| = 15 + 10 = 25`$ and
+$`|P| = 37`$ (19 productions for the variables above, 18 for the auxiliary ones).
+
+### 4.5 EBNF specification
+
+Start symbol: $`S = \mathsf{CandidateReport}`$. This is the content of
+`resume_grammar.tx`, without attributes, in classical EBNF (`=` defines, `;` ends a rule):
+
+```ebnf
+CandidateReport   = 'candidate' '{'
+                        PersonalInfo EducationSection ExperienceSection
+                        SkillSection EvaluationSection
+                    '}' ;
+
+PersonalInfo      = 'personal' '{'
+                        'name' ':' STRING
+                        [ 'email' ':' Email ]
+                        [ 'phone' ':' Phone ]
+                        { 'link' ':' Url }
+                    '}' ;
+
+EducationSection  = 'education' '{' { EducationEntry } '}' ;
+EducationEntry    = 'study' STRING ;
+
+ExperienceSection = 'experience' '{' { ExperienceEntry } '}' ;
+ExperienceEntry   = 'job' STRING ;
+
+SkillSection      = 'skills' '{' SkillEntry { SkillEntry } '}' ;
+SkillEntry        = 'skill' CanonicalName 'category' Category 'raw' STRING ;
+
+EvaluationSection = 'evaluation' '{'
+                        FullStackResult MachineLearningResult
+                        DevOpsResult DataEngineerResult
+                    '}' ;
+
+ProfileResult     = FullStackResult | MachineLearningResult
+                  | DevOpsResult | DataEngineerResult ;
+
+FullStackResult        = 'profile' 'FULL_STACK_DEVELOPER' ':' Verdict
+                         'matched' '[' [ CanonicalName { ',' CanonicalName } ] ']'
+                         'details' STRING ;
+MachineLearningResult  = 'profile' 'MACHINE_LEARNING_ENGINEER' ':' Verdict
+                         'matched' '[' [ CanonicalName { ',' CanonicalName } ] ']'
+                         'details' STRING ;
+DevOpsResult           = 'profile' 'DEVOPS_ENGINEER' ':' Verdict
+                         'matched' '[' [ CanonicalName { ',' CanonicalName } ] ']'
+                         'details' STRING ;
+DataEngineerResult     = 'profile' 'DATA_ENGINEER' ':' Verdict
+                         'matched' '[' [ CanonicalName { ',' CanonicalName } ] ']'
+                         'details' STRING ;
+
+Verdict           = 'ACCEPTED' | 'REJECTED' ;
+```
+
+In textX the list `matched+=CanonicalName[',']` is the same as
+`CanonicalName { ',' CanonicalName }`, and the whole list is optional so that
+`matched []` is valid (a profile that matched no skill). The lexical rules
+$`\mathbf{CanonicalName}`$, $`\mathbf{Category}`$, $`\mathbf{Email}`$, $`\mathbf{Phone}`$
+and $`\mathbf{Url}`$ are the regular expressions of Section 4.3.
+
+### 4.6 Productions $`P`$
+
+Each EBNF operator is replaced by auxiliary variables, with the usual rules: an option
+$`[A]`$ becomes $`X \to A \mid \varepsilon`$ and a repetition $`\{A\}`$ becomes
+$`X \to A\,X \mid \varepsilon`$. The auxiliary variables are
+
+$`\mathsf{OptEmail}`$, $`\mathsf{OptPhone}`$, $`\mathsf{LinkList}`$,
+$`\mathsf{EduEntries}`$, $`\mathsf{ExpEntries}`$, $`\mathsf{SkillList}`$,
+$`\mathsf{SkillMore}`$, $`\mathsf{MatchedOpt}`$, $`\mathsf{MatchedList}`$ and
+$`\mathsf{MatchedTail}`$.
+
+The "one or more" of the skills is written as $`\mathsf{SkillEntry}`$ followed by a
+repetition ($`\mathsf{SkillMore}`$), so that no two alternatives start with the same
+variable (Section 4.8). The productions are:
+
+```math
+\begin{aligned}
+\mathsf{CandidateReport} &\to \mathtt{candidate}\ \mathtt{\{}\ \mathsf{PersonalInfo}\ \mathsf{EducationSection}\ \mathsf{ExperienceSection}\ \mathsf{SkillSection}\ \mathsf{EvaluationSection}\ \mathtt{\}} \\[4pt]
+\mathsf{PersonalInfo} &\to \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathsf{OptEmail}\ \mathsf{OptPhone}\ \mathsf{LinkList}\ \mathtt{\}} \\
+\mathsf{OptEmail} &\to \mathtt{email}\ \mathtt{:}\ \mathbf{Email} \mid \varepsilon \\
+\mathsf{OptPhone} &\to \mathtt{phone}\ \mathtt{:}\ \mathbf{Phone} \mid \varepsilon \\
+\mathsf{LinkList} &\to \mathtt{link}\ \mathtt{:}\ \mathbf{Url}\ \mathsf{LinkList} \mid \varepsilon \\[4pt]
+\mathsf{EducationSection} &\to \mathtt{education}\ \mathtt{\{}\ \mathsf{EduEntries}\ \mathtt{\}} \\
+\mathsf{EduEntries} &\to \mathsf{EducationEntry}\ \mathsf{EduEntries} \mid \varepsilon \\
+\mathsf{EducationEntry} &\to \mathtt{study}\ \mathbf{STRING} \\[4pt]
+\mathsf{ExperienceSection} &\to \mathtt{experience}\ \mathtt{\{}\ \mathsf{ExpEntries}\ \mathtt{\}} \\
+\mathsf{ExpEntries} &\to \mathsf{ExperienceEntry}\ \mathsf{ExpEntries} \mid \varepsilon \\
+\mathsf{ExperienceEntry} &\to \mathtt{job}\ \mathbf{STRING} \\[4pt]
+\mathsf{SkillSection} &\to \mathtt{skills}\ \mathtt{\{}\ \mathsf{SkillList}\ \mathtt{\}} \\
+\mathsf{SkillList} &\to \mathsf{SkillEntry}\ \mathsf{SkillMore} \\
+\mathsf{SkillMore} &\to \mathsf{SkillEntry}\ \mathsf{SkillMore} \mid \varepsilon \\
+\mathsf{SkillEntry} &\to \mathtt{skill}\ \mathbf{CanonicalName}\ \mathtt{category}\ \mathbf{Category}\ \mathtt{raw}\ \mathbf{STRING} \\[4pt]
+\mathsf{EvaluationSection} &\to \mathtt{evaluation}\ \mathtt{\{}\ \mathsf{FullStackResult}\ \mathsf{MachineLearningResult}\ \mathsf{DevOpsResult}\ \mathsf{DataEngineerResult}\ \mathtt{\}} \\[4pt]
+\mathsf{FullStackResult} &\to \mathtt{profile}\ \mathtt{FULL\_STACK\_DEVELOPER}\ \mathtt{:}\ \mathsf{Verdict}\ \mathtt{matched}\ \mathtt{[}\ \mathsf{MatchedOpt}\ \mathtt{]}\ \mathtt{details}\ \mathbf{STRING} \\
+\mathsf{MachineLearningResult} &\to \mathtt{profile}\ \mathtt{MACHINE\_LEARNING\_ENGINEER}\ \mathtt{:}\ \mathsf{Verdict}\ \mathtt{matched}\ \mathtt{[}\ \mathsf{MatchedOpt}\ \mathtt{]}\ \mathtt{details}\ \mathbf{STRING} \\
+\mathsf{DevOpsResult} &\to \mathtt{profile}\ \mathtt{DEVOPS\_ENGINEER}\ \mathtt{:}\ \mathsf{Verdict}\ \mathtt{matched}\ \mathtt{[}\ \mathsf{MatchedOpt}\ \mathtt{]}\ \mathtt{details}\ \mathbf{STRING} \\
+\mathsf{DataEngineerResult} &\to \mathtt{profile}\ \mathtt{DATA\_ENGINEER}\ \mathtt{:}\ \mathsf{Verdict}\ \mathtt{matched}\ \mathtt{[}\ \mathsf{MatchedOpt}\ \mathtt{]}\ \mathtt{details}\ \mathbf{STRING} \\
+\mathsf{ProfileResult} &\to \mathsf{FullStackResult} \mid \mathsf{MachineLearningResult} \mid \mathsf{DevOpsResult} \mid \mathsf{DataEngineerResult} \\[4pt]
+\mathsf{MatchedOpt} &\to \mathsf{MatchedList} \mid \varepsilon \\
+\mathsf{MatchedList} &\to \mathbf{CanonicalName}\ \mathsf{MatchedTail} \\
+\mathsf{MatchedTail} &\to \mathtt{,}\ \mathbf{CanonicalName}\ \mathsf{MatchedTail} \mid \varepsilon \\
+\mathsf{Verdict} &\to \mathtt{ACCEPTED} \mid \mathtt{REJECTED}
+\end{aligned}
+```
+
+Counting each alternative as a production, this gives the 37 productions of Section 4.4.
+
+### 4.7 Derivations
+
+The derivations below are leftmost (the leftmost variable is rewritten at each step); a
+token class is shown with the lexeme that it matches.
+
+*An optional part and an empty repetition.* The block `personal { name: "A" email: a@b.co }`
+derives from $`\mathsf{PersonalInfo}`$ as
+
+```math
+\begin{aligned}
+\mathsf{PersonalInfo} &\Rightarrow \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathsf{OptEmail}\ \mathsf{OptPhone}\ \mathsf{LinkList}\ \mathtt{\}} \\
+&\Rightarrow \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathtt{email}\ \mathtt{:}\ \mathbf{Email}\ \mathsf{OptPhone}\ \mathsf{LinkList}\ \mathtt{\}} \\
+&\Rightarrow \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathtt{email}\ \mathtt{:}\ \mathbf{Email}\ \mathsf{LinkList}\ \mathtt{\}} \\
+&\Rightarrow \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathtt{email}\ \mathtt{:}\ \mathbf{Email}\ \mathtt{\}}
+\end{aligned}
+```
+
+with $`\mathbf{STRING} = \texttt{"A"}`$ and $`\mathbf{Email} = \texttt{a@b.co}`$. The last two steps
+use $`\mathsf{OptPhone} \to \varepsilon`$ and $`\mathsf{LinkList} \to \varepsilon`$.
+
+*A list with separator.* The text `[JAVASCRIPT, GIT]` (the part between the brackets of a
+result) derives from $`\mathsf{MatchedOpt}`$ as
+
+```math
+\mathsf{MatchedOpt} \Rightarrow \mathsf{MatchedList} \Rightarrow \mathbf{CanonicalName}\ \mathsf{MatchedTail}
+\Rightarrow \mathbf{CanonicalName}\ \mathtt{,}\ \mathbf{CanonicalName}\ \mathsf{MatchedTail}
+\Rightarrow \mathbf{CanonicalName}\ \mathtt{,}\ \mathbf{CanonicalName}
+```
+
+with the lexemes `JAVASCRIPT` and `GIT`. The empty list `[]` uses
+$`\mathsf{MatchedOpt} \to \varepsilon`$. The text `[JAVASCRIPT,]` has no derivation: after a
+comma, $`\mathsf{MatchedTail}`$ requires a $`\mathbf{CanonicalName}`$.
+
+### 4.8 Properties of the grammar
+
+**Determinism at every choice point.** In each choice, the alternatives start with different
+terminals, and the empty alternative is chosen when the next terminal is the one that
+follows the variable:
+
+| Variable | Alternatives start with | Empty alternative when next is |
+|---|---|---|
+| $`\mathsf{OptEmail}`$ | `email` | `phone`, `link`, `}` |
+| $`\mathsf{OptPhone}`$ | `phone` | `link`, `}` |
+| $`\mathsf{LinkList}`$ | `link` | `}` |
+| $`\mathsf{EduEntries}`$ | `study` | `}` |
+| $`\mathsf{ExpEntries}`$ | `job` | `}` |
+| $`\mathsf{SkillMore}`$ | `skill` | `}` |
+| $`\mathsf{MatchedOpt}`$ | $`\mathbf{CanonicalName}`$ | `]` |
+| $`\mathsf{MatchedTail}`$ | `,` | `]` |
+| $`\mathsf{Verdict}`$ | `ACCEPTED` or `REJECTED` | (none) |
+
+So one token of lookahead is enough to choose the production (the grammar is LL(1) over
+tokens), and therefore it is **unambiguous**: every document of $`L(G)`$ has exactly one
+derivation tree. The only variable whose alternatives share their first terminal is the
+unreachable $`\mathsf{ProfileResult}`$ (all four start with `profile`); it is never
+used by a derivation from $`S`$.
+
+**Relation with textX.** textX builds its parser from a PEG-like grammar, in which `|` is an
+ordered choice and not a union. Since all the reachable choices in the table above are
+decided by the next terminal, the ordered choice and the alternation of a CFG accept the
+same documents, so the language recognized by textX is $`L(G)`$.
+
+**The language is context-free by definition and also regular.** No reachable variable is
+recursive except through list repetition ($`\mathsf{LinkList}`$, $`\mathsf{EduEntries}`$,
+$`\mathsf{ExpEntries}`$, $`\mathsf{SkillMore}`$, $`\mathsf{MatchedTail}`$, which are
+right-linear), and the blocks are nested to a fixed depth (two levels of braces). Replacing
+each variable by its right-hand side gives a regular expression for $`L(G)`$ over tokens.
+This is consistent with the rest of the project (the lexical level is regular, Sections 1
+and 2) and it means that the grammar does not need the stack of a pushdown automaton;
+it is written as a CFG because that is the model of Stage 4 and because it is the form that
+textX accepts.
+
+**What the grammar does not check.** The grammar fixes the structure, the mandatory blocks,
+the order and the shape of the lexemes. Constraints between distant parts of the document
+are not part of the language: that a $`\mathbf{CanonicalName}`$ belongs to the output
+alphabet of Stage 2 (`UNKNOWN` is a valid $`\mathbf{CanonicalName}`$), that the names in
+`matched` appear in the `skills` block, that a verdict agrees with its `details`, or that
+the same skill is not repeated. They belong to the pipeline that produces the document
+(Stages 1 to 3), not to the grammar.
+
+### 4.9 Derivation tree and AST
+
+The derivation tree of Section 4.1 has one node for every variable and one leaf for every
+terminal, including keywords, braces and auxiliary variables. textX does not return that
+tree: when it matches a document it builds the **abstract syntax tree (AST)** of the
+document, a tree of Python objects (the *model*), by these rules:
+
+1. Each application of an object rule creates one object of the class of that rule: 13
+   classes in total ($`\mathsf{CandidateReport}`$, $`\mathsf{PersonalInfo}`$, the two
+   sections and the two entries of education and experience, $`\mathsf{SkillSection}`$,
+   $`\mathsf{SkillEntry}`$, $`\mathsf{EvaluationSection}`$ and the four results).
+2. Each assignment (`attr=`, `attr+=`, `attr*=`) stores the matched text, or the child
+   object, in an attribute. `+=` and `*=` make a list. The values of $`\mathsf{Verdict}`$ and
+   of the token classes are strings.
+3. Keywords, punctuation and the auxiliary variables of Section 4.6 do not appear in the
+   AST. An optional part that is absent leaves its attribute empty (the tests read
+   `model.personal.email or ""`).
+4. The grammar has no reference rules, so the model is a pure tree: there are no
+   cross-references between objects.
+
+For the document of `tests/test_grammar_definition.py` (the Full Stack candidate of the
+synthetic resumes), the AST is:
+
+```text
+CandidateReport
+├── personal: PersonalInfo
+│   ├── name   = "WEDNESDAY ADDAMS"
+│   ├── email  = "wednesday.addams@nevermore.edu"
+│   ├── phone  = "+1 555 666 7777"
+│   └── links  = ["https://www.linkedin.com/in/wednesday-addams",
+│                 "https://github.com/wednesday-addams"]
+├── education: EducationSection
+│   └── entries = [EducationEntry(description="B.S. in Computer Science"),
+│                  EducationEntry(description="Nevermore University (2019 - 2023)")]
+├── experience: ExperienceSection
+│   └── entries = [ExperienceEntry(description="Full Stack Developer, Raven Labs (2023 - 2026)")]
+├── skills: SkillSection
+│   └── skills = [SkillEntry(canonical="JAVASCRIPT",  category="web_language", raw="JS"),
+│                 SkillEntry(canonical="REACT",       category="frontend",     raw="React.js"),
+│                 SkillEntry(canonical="NODE_JS",     category="backend",      raw="NodeJS"),
+│                 SkillEntry(canonical="POSTGRESQL",  category="database",     raw="Postgres"),
+│                 SkillEntry(canonical="GIT",         category="vcs",          raw="Git")]
+└── evaluation: EvaluationSection
+    └── results = [
+          FullStackResult(name="FULL_STACK_DEVELOPER", verdict="ACCEPTED",
+              matched=["JAVASCRIPT","REACT","NODE_JS","POSTGRESQL","GIT"],
+              details="ACCEPTED - Full Stack Developer"),
+          MachineLearningResult(name="MACHINE_LEARNING_ENGINEER", verdict="REJECTED",
+              matched=[], details="REJECTED - Machine Learning Engineer"),
+          DevOpsResult(name="DEVOPS_ENGINEER", verdict="REJECTED",
+              matched=[], details="REJECTED - DevOps Engineer"),
+          DataEngineerResult(name="DATA_ENGINEER", verdict="REJECTED",
+              matched=[], details="REJECTED - Data Engineer") ]
+```
+
+Attributes of each class:
+
+| Class | Attributes | Multiplicity |
+|---|---|---|
+| `CandidateReport` | `personal`, `education`, `experience`, `skills`, `evaluation` | exactly one of each |
+| `PersonalInfo` | `name` (string), `email`, `phone` (strings), `links` (list of strings) | `name` 1; `email`, `phone` 0..1; `links` 0..n |
+| `EducationSection`, `ExperienceSection` | `entries` (list of `EducationEntry` / `ExperienceEntry`) | 0..n |
+| `EducationEntry`, `ExperienceEntry` | `description` (string) | 1 |
+| `SkillSection` | `skills` (list of `SkillEntry`) | 1..n |
+| `SkillEntry` | `canonical`, `category`, `raw` (strings) | 1 each |
+| `EvaluationSection` | `results` (list of the four result objects) | exactly 4, in the order of the roadmap |
+| `FullStackResult`, `MachineLearningResult`, `DevOpsResult`, `DataEngineerResult` | `name` (the profile identifier), `verdict` (`ACCEPTED` or `REJECTED`), `matched` (list of strings), `details` (string) | `matched` 0..n; the others 1 |
+
+The four result classes are specializations of the abstract rule $`\mathsf{ProfileResult}`$,
+so they share a common type in the metamodel even though $`\mathsf{ProfileResult}`$ is not
+used by any production reachable from $`S`$ (Section 4.4).
+
+### 4.10 From the model to the code
+
+| Concept | Code |
+|---|---|
+| Grammar $`G`$ (textX notation) | `resumelens/grammar/resume_grammar.tx`, path in `GRAMMAR_PATH` |
+| Metamodel (parser generated from $`G`$) | `load_metamodel()` (`textx.metamodel_from_file`, loaded once) |
+| A word $`w`$ of $`L(G)`$ | The text of a document, written by `build_profile_source(info, records, results)` from the output of Stages 1 to 3 (`CandidateInfo`, `SkillRecord`, `EvaluationResult`) |
+| Test $`w \in L(G)`$ and AST | `parse_candidate_profile(source)`; it raises `TextXSyntaxError` when $`w \notin L(G)`$ and `TypeError` when `source` is not a string |
+| Boolean form of the test | `is_valid_profile_source(source)` |
+| Strings | `_quote` writes `STRING` with double quotes and escapes an inner `"` as `\"` |
+
+The AST maps back to the pipeline data attribute by attribute:
+
+| AST | Pipeline data |
+|---|---|
+| `personal.name`, `.email`, `.phone`, `.links` | `CandidateInfo.name`, `.email`, `.phone`, `.links` |
+| `education.entries[i].description`, `experience.entries[i].description` | `CandidateInfo.education[i]`, `.experience[i]` |
+| `skills.skills[i].canonical`, `.category`, `.raw` | `SkillRecord.canonical_name`, `.category`, `.raw_name` |
+| `evaluation.results[i].name`, `.verdict`, `.matched`, `.details` | `EvaluationResult.profile_name` (written as an identifier: `Full Stack Developer` becomes `FULL_STACK_DEVELOPER`), `.is_accepted` (`verdict == "ACCEPTED"`), `.matched_sequence`, `.details` |
+
+The grammar is exercised by `tests/test_grammar_definition.py` (the grammar file, valid
+documents and each kind of lexical or syntactic violation) and by `tests/test_grammar.py`
+(parser API, serializer and round trips from the synthetic resumes through Stages 1 to 4).
