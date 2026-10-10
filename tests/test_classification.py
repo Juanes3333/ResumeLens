@@ -28,8 +28,8 @@ FULL_STACK_ACCEPTED = [
 
 ML_ACCEPTED = [
     ["PYTHON", "PANDAS", "NUMPY", "SCIKIT_LEARN", "TENSORFLOW", "SQL", "GIT"],
-    ["PYTHON", "PYTORCH", "POSTGRESQL", "GIT"],
-    ["PYTHON", "KERAS", "MATPLOTLIB", "MONGODB", "GIT"],
+    ["PYTHON", "NUMPY", "PYTORCH", "POSTGRESQL", "GIT"],
+    ["PYTHON", "MATPLOTLIB", "KERAS", "ML_MODEL_DEVELOPMENT", "MONGODB", "GIT"],
 ]
 
 
@@ -59,7 +59,7 @@ class TestFullStackProfile:
         assert not accepts_full_stack(["GIT", "POSTGRESQL", "NODE_JS", "REACT", "JAVASCRIPT"])
 
     def test_rejects_foreign_or_non_canonical_tokens(self):
-        assert not accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "POSTGRESQL", "GIT", "DOCKER"])
+        assert not accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "POSTGRESQL", "GIT", "UNKNOWN"])
         assert not accepts_full_stack(["JS", "React.js", "NodeJS", "Postgres", "Git"])
 
 
@@ -76,8 +76,10 @@ class TestMlProfile:
         [
             ["PANDAS", "SQL", "GIT"],  # no base language
             ["PYTHON", "SQL", "GIT"],  # no data / ML library
-            ["PYTHON", "PANDAS", "GIT"],  # no database
-            ["PYTHON", "PANDAS", "SQL"],  # no version control
+            ["PYTHON", "PANDAS", "SQL", "GIT"],  # no ML framework
+            ["PYTHON", "TENSORFLOW", "SQL", "GIT"],  # no data library
+            ["PYTHON", "PANDAS", "TENSORFLOW", "GIT"],  # no database
+            ["PYTHON", "PANDAS", "TENSORFLOW", "SQL"],  # no version control
         ],
     )
     def test_rejects_sequences_with_a_missing_stage(self, sequence):
@@ -88,8 +90,28 @@ class TestMlProfile:
         assert not accepts_ml(["GIT", "SQL", "PANDAS", "PYTHON"])
 
     def test_rejects_foreign_or_non_canonical_tokens(self):
-        assert not accepts_ml(["PYTHON", "PANDAS", "SQL", "GIT", "KUBERNETES"])
+        assert not accepts_ml(["PYTHON", "PANDAS", "TENSORFLOW", "SQL", "GIT", "UNKNOWN"])
         assert not accepts_ml(["Python", "Pandas", "SQL", "Git"])
+
+
+class TestOptionalStagesAndNoise:
+    def test_full_stack_accepts_nosql_and_optional_rest_api(self):
+        assert accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "NOSQL", "GIT"])
+        assert accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "SQL", "REST_API", "GIT"])
+
+    def test_ml_accepts_optional_model_development_stage(self):
+        assert accepts_ml(["PYTHON", "PANDAS", "TENSORFLOW", "ML_MODEL_DEVELOPMENT", "SQL", "GIT"])
+
+    def test_noise_after_the_profile_part_is_accepted(self):
+        assert accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "SQL", "GIT", "DOCKER", "PYTHON"])
+        assert accepts_ml(["PYTHON", "PANDAS", "TENSORFLOW", "SQL", "GIT", "DOCKER"])
+
+    def test_noise_does_not_replace_a_missing_stage(self):
+        assert not accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "DOCKER", "GIT"])
+        assert not accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "SQL", "DOCKER"])
+
+    def test_profile_skill_after_noise_is_rejected(self):
+        assert not accepts_full_stack(["JAVASCRIPT", "REACT", "NODE_JS", "SQL", "GIT", "DOCKER", "REACT"])
 
 
 class TestProfilesAreDistinct:
@@ -106,9 +128,9 @@ class TestAutomatonObjects:
             assert isinstance(automaton, DeterministicFiniteAutomaton)
             assert automaton.is_deterministic()
 
-    def test_number_of_states_is_stages_plus_one(self):
-        assert len(build_full_stack_automaton().states) == len(FULL_STACK_PROFILE.stages) + 1
-        assert len(build_ml_automaton().states) == len(ML_PROFILE.stages) + 1
+    def test_number_of_states_is_stages_plus_initial_and_noise(self):
+        assert len(build_full_stack_automaton().states) == len(FULL_STACK_PROFILE.stages) + 2
+        assert len(build_ml_automaton().states) == len(ML_PROFILE.stages) + 2
 
     def test_accepts_function_uses_the_given_automaton(self):
         assert accepts(get_full_stack_automaton(), FULL_STACK_ACCEPTED[0])
