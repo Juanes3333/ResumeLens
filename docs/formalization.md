@@ -8,12 +8,12 @@ states the mathematical object first and then maps it to the code that implement
 |---|---|---|---|
 | 1 | Extraction | Regular expressions (regular languages) | included |
 | 2 | Normalization | Finite-state transducers (7-tuples) | included |
-| 3 | Classification | Finite automata (5-tuples) | pending — not present in either source file |
+| 3 | Classification | Finite automata (5-tuples) | included |
 | 4 | Candidate profile language | Context-free grammar (EBNF) | pending — not present in either source file |
 
-This merged document combines the detailed formal specification of Stage 1 with the
-normalization model for Stage 2. The source files did not contain the formal specifications
-for Stages 3 and 4, so those sections remain pending rather than being invented.
+This document combines the detailed formal specification of Stage 1, the normalization
+model of Stage 2 and the profile automata of Stage 3. The formal specification of Stage 4 is
+still pending rather than invented.
 
 ---
 
@@ -878,3 +878,360 @@ POSTGRESQL, GIT`. An unknown profile name raises `UnknownProfileError`.
 
 The properties 1–5 and the examples of this section are verified by `tests/test_normalization.py`
 (transducers and normalizer) and `tests/test_sorter.py` (canonical order).
+
+---
+
+## Section 3. Finite automata for profile recognition (Stage 3)
+
+Stage 3 (`resumelens/classification/`) decides whether the canonical, sorted sequence of a
+candidate satisfies the qualification pattern of a profile. Each of the four profiles is a
+finite automaton built with `pyformlang.finite_automaton` in
+`resumelens/classification/automata.py`; `classifier.py` only runs them and reports the
+verdict (Section 3.7).
+
+### 3.1 Definition
+
+An automaton is the 5-tuple **M = (Q, Σ, δ, q₀, F)**, where:
+
+| Component | Meaning |
+|---|---|
+| Q | Finite set of states |
+| Σ | Finite input alphabet |
+| δ : Q × Σ → Q | Transition function (a relation Q × Σ → 𝒫(Q) for an NFA, Q × (Σ ∪ {ε}) → 𝒫(Q) for an ε-NFA) |
+| q₀ ∈ Q | Initial state |
+| F ⊆ Q | Set of accepting states |
+
+A word w = a₁a₂…aₘ is **accepted** if δ̂(q₀, w) ∈ F, where δ̂ is the extension of δ to words;
+the language of M is L(M) = { w ∈ Σ\* : δ̂(q₀, w) ∈ F }. As in Sections 1.7 and 2.1, δ is
+**partial**: a missing transition leads to an implicit non-accepting dead state, so the word
+is rejected and nothing more has to be read. The empty word is never accepted by the four
+automata (the initial state is not accepting).
+
+### 3.2 Input alphabet Σ
+
+The automata read the output of Stage 2, so Σ is the set of canonical names that the seven
+family transducers can emit (`KNOWN_SKILLS`, computed from `FAMILY_VARIANTS`). Each element
+is one **complete** symbol, not a character. It has 50 elements, the same for the four
+profiles:
+
+| Family | Canonical names |
+|---|---|
+| Web (9) | `JAVASCRIPT`, `TYPESCRIPT`, `REACT`, `NODE_JS`, `ANGULAR`, `VUE`, `SPRING_BOOT`, `DJANGO`, `REST_API` |
+| AI / data libraries (8) | `PANDAS`, `NUMPY`, `SCIKIT_LEARN`, `TENSORFLOW`, `PYTORCH`, `KERAS`, `MATPLOTLIB`, `ML_MODEL_DEVELOPMENT` |
+| Databases (11) | `SQL`, `NOSQL`, `POSTGRESQL`, `MYSQL`, `MARIADB`, `SQLITE`, `SQL_SERVER`, `ORACLE`, `MONGODB`, `REDIS`, `CASSANDRA` |
+| Cloud / DevOps (8) | `DOCKER`, `KUBERNETES`, `TERRAFORM`, `JENKINS`, `ANSIBLE`, `AWS`, `AZURE`, `GCP` |
+| Version control (1) | `GIT` |
+| Programming languages (11) | `PYTHON`, `JAVA`, `C`, `C_PLUS_PLUS`, `C_SHARP`, `GO`, `RUST`, `KOTLIN`, `SWIFT`, `PHP`, `RUBY` |
+| Data engineering (2) | `SPARK`, `AIRFLOW` |
+
+Any other string (`JS`, `React.js`, `UNKNOWN`) is **not** in Σ and has no transition, so a
+word that contains it is rejected: the normalization of Stage 2 is not repeated here.
+
+### 3.3 Staged profile model and general construction
+
+A profile P is a sequence of **stages** S₁, …, Sₙ in canonical order. Each stage Sᵢ is a
+non-empty set of canonical names that are *equivalent alternatives* for the same
+qualification (`Pandas` or `NumPy`) and is either **required** or **optional**
+(`Stage.required`). The stages of a profile are pairwise disjoint (`_validate` raises
+`ValueError` otherwise) and at least one is required. Let:
+
+- A = S₁ ∪ … ∪ Sₙ be the **profile alphabet** and K(t) the index of the stage that contains
+  t ∈ A;
+- N = Σ − A be the **noise** of the profile: known skills that the profile does not ask for.
+  Stage 2 (Section 2.6) writes them **after** the profile part, so they must not make a
+  candidate fail.
+
+Define Tᵢ = Sᵢ⁺ if Sᵢ is required and Tᵢ = Sᵢ\* if it is optional. The language of the profile
+is the regular language
+
+> **L(P) = T₁ · T₂ ⋯ Tₙ · N\***   (non-empty words only)
+
+that is, at least one skill of every required stage, in the order of the stages (several
+skills of the same stage may follow each other), then any number of noise skills.
+
+The automaton is built by `build_automaton(profile)` as M = (Q, Σ, δ, q₀, F) with:
+
+| Component | Value |
+|---|---|
+| Q | {q0, q1, …, qₙ} ∪ {q_noise}, so \|Q\| = n + 2. State qᵢ (i ≥ 1) means "the stages up to i are settled and the last profile skill read belongs to Sᵢ"; q0 means "nothing read" |
+| Σ | The 50 canonical names of Section 3.2 |
+| δ | For t ∈ A and 0 ≤ j ≤ n: δ(qⱼ, t) = q_K(t) if K(t) = j (**loop**), or if K(t) > j and all of S_{j+1}, …, S_{K(t)−1} are optional (**advance**, skipping optional stages). For t ∈ N: δ(qⱼ, t) = q_noise if qⱼ ∈ F, and δ(q_noise, t) = q_noise. Undefined elsewhere |
+| q₀ | q0 |
+| F | {qᵢ : all of S_{i+1}, …, Sₙ are optional} ∪ {q_noise}. The four profiles end with a required stage (Git), so F = {qₙ, q_noise} |
+
+Because the stages are disjoint and N is disjoint from A, every pair (qⱼ, t) has at most one
+target and the automaton is deterministic (Section 3.5). A noise skill is accepted only from
+an accepting state, so noise cannot replace a missing required stage, and once the word is in
+q_noise a profile skill has no transition: `… GIT, DOCKER, REACT` is rejected because `REACT`
+arrives after the noise.
+
+The implementation was checked against this model: for each profile the automaton and the
+regular expression equivalent to L(P) (stage alternations, `+` or `*`, then the noise
+alternation, over `re.fullmatch`) agree on 60 000 random words per profile (mostly valid
+words with random mutations, shuffles and foreign symbols), with no disagreement.
+`DeterministicFiniteAutomaton.minimize()` returns the same number of states for the four
+automata, so none of them has redundant states.
+
+### 3.4 The four automata
+
+#### 3.4.1 Full Stack Developer
+
+Profile identifier `FULL_STACK_DEVELOPER`; built by `build_full_stack_automaton()` from `FULL_STACK_PROFILE`; evaluated with `accepts_full_stack()`.
+
+**Pattern represented.** A web language, then a frontend framework, then a backend framework, then a database (SQL or NoSQL), optionally REST APIs, and finally Git.
+
+| Component | Value |
+|---|---|
+| Q | {q0, …, q6, q_noise}, \|Q\| = 8 |
+| Σ | The 50 canonical names; profile alphabet \|A\| = 21, noise \|N\| = 29 |
+| δ | 101 transitions, given by the table below (every other pair goes to the implicit dead state) |
+| q₀ | q0 |
+| F | {q6, q_noise} |
+| Language | L(P) = S1⁺ · S2⁺ · S3⁺ · S4⁺ · S5* · S6⁺ · N* |
+
+| i | Stage S_i | Required | Skills (canonical names) | Read from | Goes to |
+|---|---|---|---|---|---|
+| 1 | `web_language` | yes | `JAVASCRIPT`, `TYPESCRIPT` | q0, q1 | q1 |
+| 2 | `frontend_framework` | yes | `REACT`, `ANGULAR`, `VUE` | q1, q2 | q2 |
+| 3 | `backend_framework` | yes | `NODE_JS`, `SPRING_BOOT`, `DJANGO` | q2, q3 | q3 |
+| 4 | `database` | yes | `SQL`, `NOSQL`, `POSTGRESQL`, `MYSQL`, `MARIADB`, `SQLITE`, `SQL_SERVER`, `ORACLE`, `MONGODB`, `REDIS`, `CASSANDRA` | q3, q4 | q4 |
+| 5 | `api` | no | `REST_API` | q4, q5 | q5 |
+| 6 | `version_control` | yes | `GIT` | q4, q5, q6 | q6 |
+| — | noise N | — | the 29 names of Σ − A | q6, q_noise | q_noise |
+
+```mermaid
+stateDiagram-v2
+    [*] --> q0
+    q0 --> q1: web_language
+    q1 --> q1: web_language
+    q1 --> q2: frontend_framework
+    q2 --> q2: frontend_framework
+    q2 --> q3: backend_framework
+    q3 --> q3: backend_framework
+    q3 --> q4: database
+    q4 --> q4: database
+    q4 --> q5: api
+    q5 --> q5: api
+    q4 --> q6: version_control
+    q5 --> q6: version_control
+    q6 --> q6: version_control
+    q6 --> q_noise: noise
+    q_noise --> q_noise: noise
+    q6 --> [*]
+    q_noise --> [*]
+```
+
+Edges are labeled with the **stage** whose skills trigger them (the skills are in the table); an edge from qⱼ to qᵢ with j < i − 1 skips optional stages. Every transition not drawn goes to the dead state.
+
+#### 3.4.2 Machine Learning Engineer
+
+Profile identifier `MACHINE_LEARNING_ENGINEER`; built by `build_ml_automaton()` from `ML_PROFILE`; evaluated with `accepts_ml()`.
+
+**Pattern represented.** Python, then a data library (Pandas or NumPy), then an ML framework (Scikit-learn, TensorFlow or PyTorch), optionally model development, then a database and finally Git. It is the automaton of the diagram of the assignment.
+
+| Component | Value |
+|---|---|
+| Q | {q0, …, q6, q_noise}, \|Q\| = 8 |
+| Σ | The 50 canonical names; profile alphabet \|A\| = 21, noise \|N\| = 29 |
+| δ | 111 transitions, given by the table below (every other pair goes to the implicit dead state) |
+| q₀ | q0 |
+| F | {q6, q_noise} |
+| Language | L(P) = S1⁺ · S2⁺ · S3⁺ · S4* · S5⁺ · S6⁺ · N* |
+
+| i | Stage S_i | Required | Skills (canonical names) | Read from | Goes to |
+|---|---|---|---|---|---|
+| 1 | `base_language` | yes | `PYTHON` | q0, q1 | q1 |
+| 2 | `data_library` | yes | `PANDAS`, `NUMPY`, `MATPLOTLIB` | q1, q2 | q2 |
+| 3 | `ml_framework` | yes | `SCIKIT_LEARN`, `TENSORFLOW`, `PYTORCH`, `KERAS` | q2, q3 | q3 |
+| 4 | `ml_practice` | no | `ML_MODEL_DEVELOPMENT` | q3, q4 | q4 |
+| 5 | `database` | yes | `SQL`, `NOSQL`, `POSTGRESQL`, `MYSQL`, `MARIADB`, `SQLITE`, `SQL_SERVER`, `ORACLE`, `MONGODB`, `REDIS`, `CASSANDRA` | q3, q4, q5 | q5 |
+| 6 | `version_control` | yes | `GIT` | q5, q6 | q6 |
+| — | noise N | — | the 29 names of Σ − A | q6, q_noise | q_noise |
+
+```mermaid
+stateDiagram-v2
+    [*] --> q0
+    q0 --> q1: base_language
+    q1 --> q1: base_language
+    q1 --> q2: data_library
+    q2 --> q2: data_library
+    q2 --> q3: ml_framework
+    q3 --> q3: ml_framework
+    q3 --> q4: ml_practice
+    q4 --> q4: ml_practice
+    q3 --> q5: database
+    q4 --> q5: database
+    q5 --> q5: database
+    q5 --> q6: version_control
+    q6 --> q6: version_control
+    q6 --> q_noise: noise
+    q_noise --> q_noise: noise
+    q6 --> [*]
+    q_noise --> [*]
+```
+
+Edges are labeled with the **stage** whose skills trigger them (the skills are in the table); an edge from qⱼ to qᵢ with j < i − 1 skips optional stages. Every transition not drawn goes to the dead state.
+
+#### 3.4.3 DevOps Engineer
+
+Profile identifier `DEVOPS_ENGINEER`; built by `build_devops_automaton()` from `DEVOPS_PROFILE`; evaluated with `accepts_devops()`.
+
+**Pattern represented.** A scripting/systems language, then containers (Docker), orchestration (Kubernetes), infrastructure as code (Terraform or Ansible), optionally CI/CD (Jenkins) and a cloud provider, and finally Git.
+
+| Component | Value |
+|---|---|
+| Q | {q0, …, q7, q_noise}, \|Q\| = 9 |
+| Σ | The 50 canonical names; profile alphabet \|A\| = 13, noise \|N\| = 37 |
+| δ | 105 transitions, given by the table below (every other pair goes to the implicit dead state) |
+| q₀ | q0 |
+| F | {q7, q_noise} |
+| Language | L(P) = S1⁺ · S2⁺ · S3⁺ · S4⁺ · S5* · S6* · S7⁺ · N* |
+
+| i | Stage S_i | Required | Skills (canonical names) | Read from | Goes to |
+|---|---|---|---|---|---|
+| 1 | `language` | yes | `PYTHON`, `GO`, `JAVA`, `RUBY` | q0, q1 | q1 |
+| 2 | `container` | yes | `DOCKER` | q1, q2 | q2 |
+| 3 | `orchestration` | yes | `KUBERNETES` | q2, q3 | q3 |
+| 4 | `infrastructure_as_code` | yes | `TERRAFORM`, `ANSIBLE` | q3, q4 | q4 |
+| 5 | `ci_cd` | no | `JENKINS` | q4, q5 | q5 |
+| 6 | `cloud` | no | `AWS`, `AZURE`, `GCP` | q4, q5, q6 | q6 |
+| 7 | `version_control` | yes | `GIT` | q4, q5, q6, q7 | q7 |
+| — | noise N | — | the 37 names of Σ − A | q7, q_noise | q_noise |
+
+```mermaid
+stateDiagram-v2
+    [*] --> q0
+    q0 --> q1: language
+    q1 --> q1: language
+    q1 --> q2: container
+    q2 --> q2: container
+    q2 --> q3: orchestration
+    q3 --> q3: orchestration
+    q3 --> q4: infrastructure_as_code
+    q4 --> q4: infrastructure_as_code
+    q4 --> q5: ci_cd
+    q5 --> q5: ci_cd
+    q4 --> q6: cloud
+    q5 --> q6: cloud
+    q6 --> q6: cloud
+    q4 --> q7: version_control
+    q5 --> q7: version_control
+    q6 --> q7: version_control
+    q7 --> q7: version_control
+    q7 --> q_noise: noise
+    q_noise --> q_noise: noise
+    q7 --> [*]
+    q_noise --> [*]
+```
+
+Edges are labeled with the **stage** whose skills trigger them (the skills are in the table); an edge from qⱼ to qᵢ with j < i − 1 skips optional stages. Every transition not drawn goes to the dead state.
+
+#### 3.4.4 Data Engineer
+
+Profile identifier `DATA_ENGINEER`; built by `build_data_automaton()` from `DATA_PROFILE`; evaluated with `accepts_data()`.
+
+**Pattern represented.** A language, then batch/stream processing (Spark), workflow orchestration (Airflow), a database, optionally a cloud provider, and finally Git.
+
+| Component | Value |
+|---|---|
+| Q | {q0, …, q6, q_noise}, \|Q\| = 8 |
+| Σ | The 50 canonical names; profile alphabet \|A\| = 20, noise \|N\| = 30 |
+| δ | 101 transitions, given by the table below (every other pair goes to the implicit dead state) |
+| q₀ | q0 |
+| F | {q6, q_noise} |
+| Language | L(P) = S1⁺ · S2⁺ · S3⁺ · S4⁺ · S5* · S6⁺ · N* |
+
+| i | Stage S_i | Required | Skills (canonical names) | Read from | Goes to |
+|---|---|---|---|---|---|
+| 1 | `language` | yes | `PYTHON`, `JAVA`, `GO` | q0, q1 | q1 |
+| 2 | `data_processing` | yes | `SPARK` | q1, q2 | q2 |
+| 3 | `workflow` | yes | `AIRFLOW` | q2, q3 | q3 |
+| 4 | `database` | yes | `SQL`, `NOSQL`, `POSTGRESQL`, `MYSQL`, `MARIADB`, `SQLITE`, `SQL_SERVER`, `ORACLE`, `MONGODB`, `REDIS`, `CASSANDRA` | q3, q4 | q4 |
+| 5 | `cloud` | no | `AWS`, `AZURE`, `GCP` | q4, q5 | q5 |
+| 6 | `version_control` | yes | `GIT` | q4, q5, q6 | q6 |
+| — | noise N | — | the 30 names of Σ − A | q6, q_noise | q_noise |
+
+```mermaid
+stateDiagram-v2
+    [*] --> q0
+    q0 --> q1: language
+    q1 --> q1: language
+    q1 --> q2: data_processing
+    q2 --> q2: data_processing
+    q2 --> q3: workflow
+    q3 --> q3: workflow
+    q3 --> q4: database
+    q4 --> q4: database
+    q4 --> q5: cloud
+    q5 --> q5: cloud
+    q4 --> q6: version_control
+    q5 --> q6: version_control
+    q6 --> q6: version_control
+    q6 --> q_noise: noise
+    q_noise --> q_noise: noise
+    q6 --> [*]
+    q_noise --> [*]
+```
+
+Edges are labeled with the **stage** whose skills trigger them (the skills are in the table); an edge from qⱼ to qᵢ with j < i − 1 skips optional stages. Every transition not drawn goes to the dead state.
+
+### 3.5 Type of automaton: DFA, NFA or ε-NFA
+
+The four automata are **DFAs** (`DeterministicFiniteAutomaton`, and `is_deterministic()`
+returns `True` for each one), for these reasons:
+
+1. **Alternatives are not non-determinism.** "Pandas or NumPy" means two different symbols
+   leaving the same state towards the same state, as in the diagram of the assignment
+   (`q1 —PANDAS→ q2`, `q1 —NUMPY→ q2`). A choice between *symbols* does not need
+   non-determinism; it only needs the stage alphabets to be disjoint, which `_validate`
+   enforces. If one canonical name belonged to two stages, a state would have two targets for
+   it and a DFA could no longer be built (`ValueError`).
+2. **Optional stages do not need ε-transitions.** An ε-NFA could draw an optional stage as
+   qᵢ₋₁ —ε→ qᵢ. Removing the ε-transitions (ε-closure) gives exactly the "skip" edges of
+   Section 3.3, in which a skill of a later stage is read directly from the state before the
+   skipped stages. The result is deterministic and keeps n + 1 states plus the noise state,
+   so the ε-version would only add transitions without recognizing any new language.
+3. **Noise is a deterministic suffix.** Stage 2 puts the noise after the profile part, so a
+   single accepting sink q_noise is enough; no guessing of "where the profile part ends" is
+   needed.
+4. **Cost.** A DFA reads a word of m skills in m steps, with no set of active states, and the
+   result of `accepts` is the formal verdict used by the classifier.
+
+Pyformlang also offers `NondeterministicFiniteAutomaton` and `EpsilonNFA`; they are not used
+because they would add expressive freedom that the profiles do not need. The language of
+each profile is regular (a concatenation of Kleene-closed finite sets), as required by the
+finite-automaton model of the project.
+
+### 3.6 Traces
+
+The canonical sequences below are produced by Stage 2 for the synthetic resumes of
+`data/input_resumes/` and for hand-written variants. Every row was run through the real
+automaton.
+
+| Profile | Sequence | Run | Verdict |
+|---|---|---|---|
+| Full Stack | `JAVASCRIPT, REACT, NODE_JS, POSTGRESQL, GIT` | q0 → q1 → q2 → q3 → q4 → q6 | accepted (q6 ∈ F) |
+| Machine Learning | `PYTHON, NUMPY, PANDAS, SCIKIT_LEARN, TENSORFLOW, SQL, GIT` | q0 → q1 → q2 → q2 → q3 → q3 → q5 → q6 | accepted (the optional `ml_practice` stage is skipped: `SQL` is read from q3) |
+| DevOps | `PYTHON, DOCKER, KUBERNETES, TERRAFORM, GIT` | q0 → q1 → q2 → q3 → q4 → q7 | accepted (CI/CD and cloud skipped: `GIT` is read from q4) |
+| Data Engineer | `PYTHON, SPARK, AIRFLOW, POSTGRESQL, GIT` | q0 → q1 → q2 → q3 → q4 → q6 | accepted (cloud skipped) |
+| DevOps | `PYTHON, DOCKER, KUBERNETES, ANSIBLE, JENKINS, AWS, GIT` | q0 → q1 → q2 → q3 → q4 → q5 → q6 → q7 | accepted (every stage present) |
+| Full Stack | `JAVASCRIPT, REACT, NODE_JS, SQL, GIT, DOCKER` | q0 → q1 → q2 → q3 → q4 → q6 → q_noise | accepted (`DOCKER` is noise after the profile part) |
+| Full Stack | `JAVASCRIPT, REACT, NODE_JS, SQL, GIT, DOCKER, REACT` | …→ q6 → q_noise, then `REACT` has no transition | rejected |
+| Machine Learning | `PYTHON, PANDAS, SQL, GIT` | q0 → q1 → q2, then `SQL` has no transition from q2 | rejected (no ML framework: the required stage 3 cannot be skipped) |
+
+### 3.7 From the model to the code
+
+| Concept | Code |
+|---|---|
+| Σ | `KNOWN_SKILLS` |
+| Stage Sᵢ, profile | `Stage(name, tokens, required)`, `ProfileSpec` |
+| The four profiles | `FULL_STACK_PROFILE`, `ML_PROFILE`, `DEVOPS_PROFILE`, `DATA_PROFILE` (`ALL_PROFILES`) |
+| Checks of the model (disjoint stages, at least one required stage) | `_validate` |
+| M = (Q, Σ, δ, q₀, F) | `build_automaton` and the `build_*_automaton` functions; cached by `get_*_automaton` |
+| Acceptance | `accepts` (calls `DeterministicFiniteAutomaton.accepts`) and `accepts_*` |
+| Verdict and report | `classify_*` in `classifier.py` (`ACCEPTED` / `REJECTED`) |
+
+The order of the stages is the order of the slots of the sorter (`PROFILE_SLOTS`,
+Section 2.6), stage by stage, so a sequence sorted by `sort_by_profile` for profile P is
+already in the order that the automaton of P reads: the profile part first and the noise after
+it. The automata and their examples are verified by `tests/test_classification.py`.
