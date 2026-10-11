@@ -169,6 +169,10 @@ written; `2` for invalid command-line arguments.
 
 ## Usage (web interface)
 
+**Deployed app:** <https://resumelens-pgb5wrapgu6atutvhodbi5.streamlit.app/>
+
+To run it locally:
+
 ```bash
 streamlit run app.py
 ```
@@ -182,9 +186,10 @@ transducers and the canonical order, the verdict of each profile with the report
 HTML and Markdown reports, which can be downloaded. A résumé whose document violates the grammar
 shows the syntax error and no report.
 
-To publish it with Streamlit Community Cloud, push the repository to GitHub, create an app from
-the repository, the branch `main` and the main file `app.py`; the service installs the pinned
-packages of `requirements.txt` and redeploys on every push.
+The deployed app is published with Streamlit Community Cloud from this repository (branch `main`,
+main file `app.py`): the service installs the pinned packages of `requirements.txt` and redeploys
+on every push. To publish your own copy, push the repository to GitHub and create an app with
+those same settings.
 
 ## Candidate profile language (Stage 4)
 
