@@ -21,6 +21,7 @@ from resumelens.cli import (
     format_console_report,
     main,
     run_pipeline,
+    run_pipeline_text,
     write_report,
 )
 from resumelens.normalization import PROFILES
@@ -164,6 +165,20 @@ class TestRunPipeline:
         assert run.normalization.records == []
         assert run.report.accepted_profiles == []
         assert len(run.report.rejected_profiles) == 4
+
+    @pytest.mark.parametrize("alias", sorted(ACCEPTED_BY))
+    def test_text_gives_the_same_run_as_the_file(self, resume_paths, alias):
+        from_file = run_pipeline(resume_paths[alias])
+        from_text = run_pipeline_text(resume_paths[alias].read_text(encoding="utf-8"), resume_paths[alias])
+        assert from_text.source == from_file.source
+        assert from_text.cv_path == from_file.cv_path
+        assert from_text.report.verdicts() == from_file.report.verdicts()
+
+    def test_text_uses_a_default_label_and_accepts_inline_skills(self):
+        run = run_pipeline_text("Mary Jane Watson\nTechnical Skills: Python, Pandas, sklearn, SQL, Git.\n")
+        assert run.cv_path == Path("<text>")
+        assert run.resume.raw_skills == ["Python", "Pandas", "sklearn", "SQL", "Git"]
+        assert run.report.accepted_profiles == ["Machine Learning Engineer"]
 
     def test_accepts_a_string_path(self, resume_paths):
         assert run_pipeline(str(resume_paths["data"])).report.accepted_profiles == ["Data Engineer"]

@@ -40,6 +40,7 @@ ACCEPTED_PROFILE_BY_ALIAS = {
 PROFILE_TITLES = list(ACCEPTED_PROFILE_BY_ALIAS.values())
 SECTIONS = [
     "Personal Information",
+    "Profile Summary",
     "Education",
     "Experience",
     "Normalized Technical Skills",
@@ -66,14 +67,42 @@ def fake_model(
     links=(),
     education=(),
     experience=(),
+    location="",
+    current_role="",
+    summary=None,
+    jobs=(),
     skills=(("JAVASCRIPT", "web_language", "JS"),),
     results=(("FULL_STACK_DEVELOPER", "ACCEPTED", ("JAVASCRIPT",), "report"),),
 ):
-    """Build a stand-in with the attributes of a ``CandidateReport`` model."""
+    """Build a stand-in with the attributes of a ``CandidateReport`` model.
+
+    ``summary`` is ``None`` (no summary block) or a list of paragraphs; each item of ``jobs`` is a
+    structured entry ``(role, company, period, highlights)``.
+    """
+    entries = [
+        SimpleNamespace(description=d, role="", company="", period="", highlights=[])
+        for d in experience
+    ]
+    entries += [
+        SimpleNamespace(
+            description=f"{r}, {c} ({p})", role=r, company=c, period=p, highlights=list(h)
+        )
+        for r, c, p, h in jobs
+    ]
     return SimpleNamespace(
-        personal=SimpleNamespace(name=name, email=email, phone=phone, links=list(links)),
+        personal=SimpleNamespace(
+            name=name,
+            email=email,
+            phone=phone,
+            location=location,
+            current_role=current_role,
+            links=list(links),
+        ),
+        summary=None
+        if summary is None
+        else SimpleNamespace(paragraphs=[SimpleNamespace(text=t) for t in summary]),
         education=SimpleNamespace(entries=[SimpleNamespace(description=d) for d in education]),
-        experience=SimpleNamespace(entries=[SimpleNamespace(description=d) for d in experience]),
+        experience=SimpleNamespace(entries=entries),
         skills=SimpleNamespace(
             skills=[SimpleNamespace(canonical=c, category=k, raw=r) for c, k, r in skills]
         ),
@@ -208,7 +237,10 @@ def test_html_injects_candidate_data(models):
     )
     assert "<li>B.S. in Computer Science</li>" in html
     assert "<li>Nevermore University (2019 - 2023)</li>" in html
-    assert "<li>Full Stack Developer, Raven Labs (2023 - 2026)</li>" in html
+    assert "<li>3 years of experience developing web applications</li>" in html
+    assert "<h3>Full Stack Developer</h3>" in html
+    assert '<p class="metadata">Raven Labs &middot; 2023 - 2026</p>' in html
+    assert "<li>Built a React.js dashboard backed by a NodeJS REST API.</li>" in html
 
 
 def test_html_injects_the_normalized_skills(models):
@@ -233,10 +265,11 @@ def test_html_injects_the_normalized_skills(models):
 @pytest.mark.parametrize("alias, accepted", list(ACCEPTED_PROFILE_BY_ALIAS.items()))
 def test_html_shows_the_verdict_of_each_profile(models, alias, accepted):
     html = render_html(models[alias])
-    assert re.findall(r"<h3>(.*?)</h3>", html) == PROFILE_TITLES
+    evaluation = html.split("<h2>Qualification Evaluation</h2>", 1)[1]
+    assert re.findall(r"<h3>(.*?)</h3>", evaluation) == PROFILE_TITLES
     assert html.count('<span class="accepted">ACCEPTED</span>') == 1
     assert html.count('<span class="rejected">REJECTED</span>') == 3
-    block = re.search(rf"<h3>{accepted}</h3>(.*?)</div>", html, re.S).group(1)
+    block = re.search(rf"<h3>{accepted}</h3>(.*?)</div>", evaluation, re.S).group(1)
     assert 'class="accepted"' in block
 
 
@@ -320,7 +353,8 @@ def test_markdown_has_title_and_sections_in_order(models, alias):
     lines = md.splitlines()
     assert lines[0].startswith("# ") and md.endswith("\n") and not md.endswith("\n\n")
     assert [line[3:] for line in lines if line.startswith("## ")] == SECTIONS
-    assert [line[4:] for line in lines if line.startswith("### ")] == PROFILE_TITLES
+    evaluation = lines[lines.index("## Qualification Evaluation"):]
+    assert [line[4:] for line in evaluation if line.startswith("### ")] == PROFILE_TITLES
 
 
 def test_markdown_is_plain_markdown_without_html_page_markup(models):
@@ -338,7 +372,10 @@ def test_markdown_injects_candidate_data(models):
     assert "- **Link:** <https://github.com/wednesday-addams>" in md
     assert "- B.S. in Computer Science" in md
     assert "- Nevermore University (2019 - 2023)" in md
-    assert "- Full Stack Developer, Raven Labs (2023 - 2026)" in md
+    assert "- 3 years of experience developing web applications" in md
+    assert "### Full Stack Developer" in md
+    assert "_Raven Labs · 2023 - 2026_" in md
+    assert "- Built a React.js dashboard backed by a NodeJS REST API." in md
 
 
 def test_markdown_lists_the_normalized_skills_in_a_table(models):
@@ -359,7 +396,8 @@ def test_markdown_shows_the_verdict_of_each_profile(models, alias, accepted):
     md = render_markdown_report(models[alias])
     assert md.count("- **Qualification pattern:** ACCEPTED") == 1
     assert md.count("- **Qualification pattern:** REJECTED") == 3
-    section = md.split(f"### {accepted}\n", 1)[1].split("###", 1)[0]
+    evaluation = md.split("## Qualification Evaluation", 1)[1]
+    section = evaluation.split(f"### {accepted}\n", 1)[1].split("###", 1)[0]
     assert "- **Qualification pattern:** ACCEPTED" in section
 
 
@@ -495,3 +533,82 @@ def test_write_visualization_overwrites_and_keeps_utf8(tmp_path):
 def test_write_visualization_to_a_directory_raises_os_error(tmp_path):
     with pytest.raises(OSError):
         write_visualization("x", tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Report details: location, current role, summary and structured experience
+# ---------------------------------------------------------------------------
+DETAILED = dict(
+    location="Nevermore Academy, Jericho",
+    current_role="Student & <b>investigator</b>",
+    summary=["First paragraph.", "Second <i>paragraph</i>."],
+    jobs=[("Web Developer", "Acme & Co", "2020 - 2023", ["Built <x>.", "Tested it."])],
+)
+
+
+@pytest.mark.parametrize("alias", list(ACCEPTED_PROFILE_BY_ALIAS))
+def test_html_shows_location_current_role_and_summary_of_the_fixtures(models, alias):
+    html = render_html(models[alias])
+    assert "<strong>Location:</strong>" in html and "<strong>Current role:</strong>" in html
+    summary = html.split("<h2>Profile Summary</h2>", 1)[1].split("</div>", 1)[0]
+    assert len(re.findall(r"<p>", summary)) == 2
+
+
+def test_html_shows_structured_experience_in_the_order_of_the_example():
+    html = render_html(fake_model(**DETAILED))
+    assert "<strong>Location:</strong> Nevermore Academy, Jericho" in html
+    experience = html.split("<h2>Experience</h2>", 1)[1].split("</div>", 1)[0]
+    assert experience.index("<h3>Web Developer</h3>") < experience.index('<p class="metadata">')
+    assert experience.index('<p class="metadata">') < experience.index("<li>")
+    assert '<p class="metadata">Acme &amp; Co &middot; 2020 - 2023</p>' in experience
+
+
+def test_html_escapes_the_new_values():
+    html = render_html(fake_model(**DETAILED))
+    assert "<b>" not in html and "<i>" not in html and "<x>" not in html
+    assert "Student &amp; &lt;b&gt;investigator&lt;/b&gt;" in html
+    assert "Second &lt;i&gt;paragraph&lt;/i&gt;." in html
+    assert "<li>Built &lt;x&gt;.</li>" in html
+
+
+def test_html_sections_stay_balanced_with_the_new_data():
+    checker = TagChecker()
+    checker.feed(render_html(fake_model(**DETAILED)))
+    assert not checker.errors and not checker.stack
+
+
+def test_html_without_summary_or_structured_jobs_keeps_the_plain_layout():
+    html = render_html(fake_model(experience=("3 years of experience",)))
+    assert "<h2>Profile Summary</h2>" in html and "No summary provided." in html
+    assert "<li>3 years of experience</li>" in html
+    assert "<h3>" not in html.split("<h2>Experience</h2>", 1)[1].split("</div>", 1)[0]
+    assert "Location" not in html and "Current role" not in html
+
+
+def test_html_mixes_plain_and_structured_entries_in_order():
+    html = render_html(fake_model(experience=("Plain entry",), jobs=[("Dev", "Acme", "2020 - 2021", [])]))
+    experience = html.split("<h2>Experience</h2>", 1)[1].split("</div>", 1)[0]
+    assert experience.index("Plain entry") < experience.index("<h3>Dev</h3>")
+    assert "<ul>" in experience and experience.count("<ul>") == 1  # no empty list for a job without bullets
+
+
+@pytest.mark.parametrize("alias", list(ACCEPTED_PROFILE_BY_ALIAS))
+def test_markdown_shows_location_current_role_and_summary_of_the_fixtures(models, alias):
+    md = render_markdown_report(models[alias])
+    assert "- **Location:** " in md and "- **Current role:** " in md
+    summary = md.split("## Profile Summary\n\n", 1)[1].split("\n## ", 1)[0]
+    assert len(summary.strip().split("\n\n")) == 2
+
+
+def test_markdown_shows_structured_experience():
+    md = render_markdown_report(fake_model(**DETAILED))
+    experience = md.split("## Experience\n\n", 1)[1].split("\n## ", 1)[0]
+    assert experience.splitlines()[0] == "### Web Developer"
+    assert "_Acme \x5c& Co \u00b7 2020 - 2023_" in experience
+    assert r"- Built \<x\>." in experience and "- Tested it." in experience
+
+
+def test_markdown_without_summary_or_details():
+    md = render_markdown_report(fake_model())
+    assert "## Profile Summary\n\n_No summary provided._" in md
+    assert "Location" not in md and "Current role" not in md

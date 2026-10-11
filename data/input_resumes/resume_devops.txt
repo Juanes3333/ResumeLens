@@ -3,11 +3,15 @@ Peter Parker
 Contact:
 Email: peter.parker@dailybugle.com
 Phone: +1 555 222 3344
+Location: Queens, New York
+Current role: DevOps Engineer at Stark Cloud
 LinkedIn: https://www.linkedin.com/in/peter-parker
 GitHub: https://github.com/pparker
 
 Summary:
 3 years of experience automating infrastructure and deployment pipelines.
+
+He maintains the infrastructure that deploys and monitors containerized services, and automates releases so that teams can ship changes safely.
 
 Technical Skills:
 Python, Docker, Kubernetes, Terraform, Git.

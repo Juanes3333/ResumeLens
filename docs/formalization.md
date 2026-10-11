@@ -19,9 +19,9 @@ candidate profile language of Stage 4.
 
 ## Section 1. Stage 1 — Regular Expressions and Lexical Extraction
 
-Source of truth: `resumelens/extraction/patterns.py` (22 patterns in the registry
-`PATTERNS`, plus the skill registry `SKILL_PATTERNS` and the delimiter
-`SKILL_SEPARATOR_PATTERN`). Their orchestration lives in `resumelens/extraction/extractor.py`
+Source of truth: `resumelens/extraction/patterns.py` (25 patterns in the registry
+`PATTERNS`, plus the skill registry `SKILL_PATTERNS`, the delimiter
+`SKILL_SEPARATOR_PATTERN` and the list marker `SKILL_BULLET_PATTERN`). Their orchestration lives in `resumelens/extraction/extractor.py`
 (Section 1.8) and is not part of the formal model.
 
 ### 1.1 Conventions
@@ -161,10 +161,14 @@ Languages with a finite number of strings are marked *finite*.
 | `devops_cloud` | `DEVOPS_CLOUD_PATTERN` | IGNORECASE | finite |
 | `years_experience` | `YEARS_EXPERIENCE_PATTERN` | IGNORECASE | infinite |
 | `experience_entry` | `EXPERIENCE_ENTRY_PATTERN` | MULTILINE, IGNORECASE | infinite |
+| `location` | `LOCATION_PATTERN` | MULTILINE, IGNORECASE | infinite, anchored per line |
+| `current_role` | `CURRENT_ROLE_PATTERN` | MULTILINE, IGNORECASE | infinite, anchored per line |
+| `highlight` | `HIGHLIGHT_PATTERN` | MULTILINE | infinite, anchored per line |
 
 `SKILL_PATTERNS` is the registry of the nine skill patterns, in the order the extractor
-reports them. `SKILL_SEPARATOR_PATTERN` is a delimiter used to split a list, not an extraction
-pattern, so it is not in `PATTERNS` (Section 1.4.5).
+reports them. `SKILL_SEPARATOR_PATTERN` is a delimiter used to split a list and
+`SKILL_BULLET_PATTERN` strips a list marker; neither is an extraction pattern, so they are not
+in `PATTERNS` (Section 1.4.5).
 
 **Case-insensitive flag.** With `re.IGNORECASE`, the language of an expression $`r`$ is
 $`L_{i}(r) = L(r')`$ where $`r'`$ replaces every literal letter $`a`$ by the class
@@ -231,17 +235,21 @@ GitHub profiles among them. Accepted: `https://www.linkedin.com/in/gwen-stacy`,
 #### 1.4.2 Structure, name and education
 
 **Section header.** Let $`T`$ be the finite set of titles
-$`\{\text{Contact}, \text{Summary}, \text{Technical Skills}, \text{Skills}, \text{Education}, \text{Experience}, \text{Work Experience}, \text{Projects}, \text{Certifications}\}`$.
-Per line,
+$`\{\text{Contact Information}, \text{Contact}, \text{Summary}, \text{Technical Skills}, \text{Skills}, \text{Technologies}, \text{Tech Stack}, \text{Education}, \text{Professional Experience}, \text{Work Experience}, \text{Experience}, \text{Projects}, \text{Certifications}\}`$,
+where the space between the two words of a title stands for $`S_h^{+}`$. Per line,
 
 ```math
-L(\mathsf{SECTION\_HEADER}) = S_h^{*}\ T\ S_h^{*}\ \mathtt{:}\ S_h^{*}
+L(\mathsf{SECTION\_HEADER}) = S_h^{*}\ T\ S_h^{*}\ \big(\ \varepsilon \ \mid\ \mathtt{:}\ S_h^{*}\ \big)
 ```
 
-with the anchors of Section 1.5.4 forcing the whole line to be of that shape. Named group:
-`title`. Accepted: `Technical Skills:`. Rejected: `Technical Skills: Python` (text after
-the colon) and `Technical  Skills:` (two spaces: the space inside a title is a literal
-symbol, not a class).
+The `^` anchor pins the title to the start of the line. The alternative $`\varepsilon`$ is
+anchored with `$`, so a title **without** a colon is a header only if it is the whole line.
+The alternative with the colon needs no end anchor: whatever follows the colon is the content
+of the section, and the extractor takes the body of the section from the end of the match, so
+`Skills: Python, Git` opens the section `Skills` with the body `Python, Git`. Named group:
+`title`. Accepted: `Technical Skills:`, `Technical Skills`, `Skills: Python, Git`,
+`Technical  Skills:` (two spaces). Rejected: `Skills are important`, `Experience with Python`
+and `Technical Skills Python` (a title followed by text and no colon).
 
 **Name.** With $`\mathrm{Cp}_{\mathrm{n}}`$ and $`\mathrm{Lt}`$ from Section 1.2,
 $`\mathsf{WORD} = \mathrm{Cp}_{\mathrm{n}}\,\big(\mathrm{Lt} \mid \mathrm{Nc}\big)^{*}`$ and
@@ -373,19 +381,73 @@ Accepted: `Full Stack Developer, Raven Labs (2023 - 2026)`.
 #### 1.4.5 Skill list
 
 The skills that go to Stage 2 are not found by the bank but cut from the *Technical Skills*
-section. With $`\mathsf{SEPS} = \{\mathtt{,}, \mathtt{;}, \mathtt{\backslash n}\}`$ (the language of
-`SKILL_SEPARATOR_PATTERN`), the section body is split on $`\mathsf{SEPS}`$ and each piece is
-stripped of surrounding whitespace and of a trailing period; empty pieces are dropped:
+section (its titles are `Technical Skills`, `Skills`, `Technologies` and `Tech Stack`, and the
+list may start on the same line as the title, Section 1.4.2). Let $`\mathsf{SEPS}`$ be the
+set of the comma, the semicolon, the vertical bar, the line break and the two bullet dots
+U+2022 and U+00B7 (the language of `SKILL_SEPARATOR_PATTERN`; the hyphen is not a separator,
+so `Scikit-learn` stays whole). With
+$`\mathsf{BULLET} = (\mathtt{-} \mid \mathtt{*} \mid \mathtt{+})\ S_h^{+}`$
+(`SKILL_BULLET_PATTERN`, the list marker of an item such as `- Python`), the section body is
+split on $`\mathsf{SEPS}`$ and each piece is stripped of surrounding whitespace, of a leading
+$`\mathsf{BULLET}`$ and of a trailing period; empty pieces are dropped:
 
 ```math
 \mathsf{RAW\_SKILL} = \big(\Sigma \setminus \mathsf{SEPS}\big)^{+} \quad \text{(after stripping)}
 ```
+
+The marker needs at least one space after it, so `C++`, `.NET` and `-Python` are not
+changed. Accepted layouts, all giving the same five strings below: `Technical Skills:` followed
+by the list on the next line, `Technical Skills: JS, React.js, ...` on one line, a title
+without colon, a list separated by `|`, and one item per line with `-`, `*`, `+` or a bullet dot.
 
 For the section `JS, React.js, NodeJS, Postgres, Git.` this gives exactly the five strings
 of the assignment: `JS`, `React.js`, `NodeJS`, `Postgres`, `Git`, in order of appearance and
 not normalized. The result is stored in `RawResumeData.raw_skills`. The skills found by the
 bank over the whole resume go to `RawResumeData.detected_skills`, grouped by type; they are
 informational and are not the input of Stage 2.
+
+#### 1.4.6 Report details: location, current role, summary and job highlights
+
+These four pieces of information are shown in the report (they are the sections of the example
+page of the assignment) but they never take part in a verdict. Let
+$`\mathrm{Mk}`$ be the set of the list markers: the hyphen, the asterisk, the plus sign and the
+two bullet dots U+2022 and U+00B7. With $`\mathsf{REST} = (\Sigma \setminus \{\mathtt{\backslash n}\})^{*}`$
+(the rest of a line), each pattern recognizes a whole line:
+
+```math
+\begin{aligned}
+L(\mathsf{LOCATION}) &= S_h^{*}\ \mathtt{Location}\ S_h^{*}\ \mathtt{:}\ S_h^{*}\ \mathsf{REST}
+\\ L(\mathsf{CURRENT\_ROLE}) &= S_h^{*}\ \mathtt{Current}\ S_h^{+}\ \mathtt{role}\ S_h^{*}\ \mathtt{:}\ S_h^{*}\ \mathsf{REST}
+\\ L(\mathsf{HIGHLIGHT}) &= S_h^{*}\ \mathrm{Mk}\ S_h^{+}\ \mathsf{REST}
+\end{aligned}
+```
+
+The first two are case-insensitive and have the named groups `location` and `role`;
+`HIGHLIGHT` has the group `text`. Accepted: `Location: Nevermore Academy, Jericho`,
+`Current role: DevOps Engineer at Stark Cloud`, `- Built a React.js dashboard.`,
+`* Used Git`. Rejected: `Relocation: yes` and `My location: Bogota` (the label must start the
+line), `Location Bogota` (no colon), `Role: Developer` and `Previous role: QA`,
+`Built a dashboard` and `-Built` (a marker needs a space after it) and a job line such as
+`Full Stack Developer, Raven Labs (2023 - 2026)`. The three patterns are anchored at both ends
+and have a single starred class, so they run in linear time (they have none of the nested
+quantifiers of Section 1.6.2).
+
+The extractor adds four rules that are not patterns:
+
+- **Location and current role.** The value is the text after the colon, trimmed; the *Contact*
+  section is searched first and then the whole text, and a line with an empty value is skipped.
+- **Summary.** The body of the *Summary* section is split on blank lines (the regular language
+  $`\mathtt{\backslash n}\ S_h^{*}\ \mathtt{\backslash n}`$); each paragraph has its whitespace
+  collapsed to single spaces and empty paragraphs are dropped.
+- **Jobs.** Each match of $`\mathsf{EXPERIENCE\_ENTRY}`$ in the *Experience* section is a job: the
+  groups `role` and `company` are kept and the period is written as `start - end`. Its
+  highlights are the $`\mathsf{HIGHLIGHT}`$ lines between that entry and the next one, so a bullet
+  always belongs to the entry that precedes it.
+- **Link with the verdict.** None: Stage 2 only reads `raw_skills` (Section 1.4.5).
+
+For the Full Stack résumé, the result is `location = "Nevermore Academy, Jericho"`,
+`current_role = "Student and independent investigator"`, two summary paragraphs and one job
+(`Full Stack Developer`, `Raven Labs`, `2023 - 2026`) with two highlights.
 
 ### 1.5 Lexical delimiters: formal justification
 
@@ -471,9 +533,10 @@ $`i = |w|`$ or $`w_i = \mathtt{\backslash n}`$. If $`r`$ is regular and does not
 
 where $`\mathrm{Start}`$ and $`\mathrm{End}`$ denote the anchors `^` and `$`. That is, an
 anchored pattern is a **line-level** filter: it recognizes whole lines of the resume and
-never fragments of a line. This is exactly what `SECTION_HEADER_PATTERN` needs:
-`Technical Skills:` is a header only if nothing else is on its line, so a sentence such as
-`Experience: 3 years` is not a header. `EXPERIENCE_ENTRY_PATTERN` and
+never fragments of a line. This is what `SECTION_HEADER_PATTERN` needs for the title without a colon: `Technical Skills`
+is a header only if nothing else is on its line, so a sentence such as `Experience with
+Python` is not one (with a colon the line may go on, because the rest is the content of the
+section). `EXPERIENCE_ENTRY_PATTERN` and
 `EDUCATION_ENTRY_PATTERN` use only `^`, which pins the start of the record to the start
 of a line while the end is delimited by the closing parenthesis. `NAME_PATTERN` uses `^…$`
 without `MULTILINE`, so it anchors the start and the end of the *string* it is given; the
@@ -568,15 +631,16 @@ ResumeLens:
 3. **Cost.** A DFA decides membership in $`O(n)`$, whereas a backtracking engine can need
    more time. The patterns of ResumeLens use no backreferences and no nested unbounded
    quantifiers over overlapping character sets (the classical source of exponential
-   behaviour), so they stay polynomial. However, two patterns contain adjacent
-   quantifiers over overlapping sets (`EXPERIENCE_ENTRY_PATTERN`, with the role followed
-   by `[ \t]*`, and `INSTITUTION_PATTERN`, with `(Cp [ \t]+)*` before the keyword) and
-   have **quadratic** worst-case time: on adversarial lines of 2 000, 4 000 and 8 000
-   characters we measured about 0.06 s, 0.26 s and 1.0 s for the former and 0.03 s,
-   0.12 s and 0.5 s for the latter (each doubling of the length multiplies the time by about
-   four). A real resume line is at most a few hundred
-   characters, so this is irrelevant for the supported input, but it is a limit of the
-   engine and not of the language.
+   behaviour), so they stay polynomial. However, three patterns contain quantifiers over
+   overlapping sets and have **quadratic** worst-case time: `EXPERIENCE_ENTRY_PATTERN` (the
+   role followed by `[ \t]*`), `INSTITUTION_PATTERN` (`(Cp [ \t]+)*` before the keyword) and
+   `EMAIL_PATTERN` (the user part, a long run of symbols of the class that never reaches an `@`,
+   is scanned again from every starting position). On adversarial lines of 2 000, 4 000 and
+   8 000 characters we measured about 0.02 s, 0.10 s and 0.38 s for the first, 0.02 s, 0.09 s
+   and 0.34 s for the second and 0.01 s, 0.05 s and 0.19 s for the third (each doubling of the
+   length multiplies the time by about four; the times depend on the machine). A real resume
+   line is at most a few hundred characters, so this is irrelevant for the supported input, but
+   it is a limit of the engine and not of the language.
 
 Only constructs that preserve regularity are used: concatenation, alternation, bounded
 and unbounded repetition, character classes, case folding, and the context assertions of
@@ -596,7 +660,7 @@ line-level header pattern and leaves the structural description to a later stage
 | 4 | A capitalized `Go` or `C` in prose (`Go to the store`, `Plan C`) is reported as a language. | $`L_{\mathrm{cs}}`$ is case-sensitive, but a regular language cannot tell the verb *go* from the language *Go*. It is harmless because `detected_skills` is informational. |
 | 5 | A name whose first letter is an accented capital other than `ÁÉÍÓÚÑÜ` (for example `Çelik Özdemir`) is rejected. | $`\mathrm{Cp}_{\mathrm{n}}`$ is a finite class; widening it is a change of the language, not of the engine. |
 | 6 | `(555 123 4567` is accepted as a phone number. | The two parentheses are independently optional (Section 1.4.1). |
-| 7 | A very long adversarial line can take about a second. | Quadratic backtracking in two patterns (Section 1.6.2). |
+| 7 | A very long adversarial line (tens of thousands of characters) can take several seconds. | Quadratic backtracking in three patterns: `EXPERIENCE_ENTRY_PATTERN`, `INSTITUTION_PATTERN` and `EMAIL_PATTERN` (Section 1.6.2). |
 
 Three limitations of an earlier version of the patterns no longer exist: accented names are
 recognized (the name uses $`\mathrm{Lt}`$), `js` is no longer reported inside `Node.js` /
@@ -612,7 +676,10 @@ recognized (the name uses $`\mathrm{Lt}`$), `js` is no longer reported inside `N
 | `extract_contact` | `EMAIL_`, `PHONE_`, `URL_`, `LINKEDIN_URL_`, `GITHUB_URL_PATTERN` | email, phone, links, LinkedIn and GitHub profiles |
 | `extract_education` | `DEGREE_`, `INSTITUTION_`, `DATE_RANGE_PATTERN` | lines of the *Education* section that describe a study |
 | `extract_experience` | `YEARS_EXPERIENCE_`, `EXPERIENCE_ENTRY_PATTERN` | years of experience and job entries |
-| `extract_skills` | `SKILL_SEPARATOR_PATTERN` | $`\mathsf{RAW\_SKILL}`$ tokens, input of Stage 2 |
+| `extract_skills` | `SKILL_SEPARATOR_PATTERN`, `SKILL_BULLET_PATTERN` | $`\mathsf{RAW\_SKILL}`$ tokens, input of Stage 2 |
+| `extract_location`, `extract_current_role` | `LOCATION_`, `CURRENT_ROLE_PATTERN` | `location` and `current_role` of the report |
+| `extract_summary` | blank-line split of the *Summary* section | paragraphs of the profile summary |
+| `extract_jobs` | `EXPERIENCE_ENTRY_PATTERN`, `HIGHLIGHT_PATTERN` | structured jobs (`JobEntry`) with their highlights |
 | `extract_technologies` | `SKILL_PATTERNS` (nine languages of Section 1.4.3) | technologies by type, in `detected_skills` |
 
 `EDUCATION_ENTRY_PATTERN` is the only pattern that the pipeline does not call: it is the
@@ -672,6 +739,33 @@ and the one that translates whole words):
 produced two different outputs, `apply_transducer` raises `ValueError`; with a deterministic
 T_family that cannot happen.
 
+The normalizer (`SkillNormalizer`) offers the token to the seven T_family in a fixed order; the
+first one that accepts it decides the canonical name and, through the category table, its
+category:
+
+```mermaid
+flowchart LR
+    W["raw token w<br/>(e.g. React.js)"] --> C["T_case<br/>character by character"]
+    C -->|"lower(w)<br/>react.js"| F1["T_web"]
+    F1 -->|"accepts"| OUT["canonical name<br/>REACT"]
+    F1 -->|"rejects"| F2["T_ai"]
+    F2 -->|"rejects"| F3["T_database"]
+    F3 -->|"rejects"| F4["T_devops"]
+    F4 -->|"rejects"| F5["T_vcs"]
+    F5 -->|"rejects"| F6["T_language"]
+    F6 -->|"rejects"| F7["T_data"]
+    F7 -->|"rejects"| UN["unrecognized<br/>(reported, never guessed)"]
+    F2 -->|"accepts"| OUT
+    F3 -->|"accepts"| OUT
+    F4 -->|"accepts"| OUT
+    F5 -->|"accepts"| OUT
+    F6 -->|"accepts"| OUT
+    F7 -->|"accepts"| OUT
+```
+
+The spelling tables are disjoint, so the order of the seven transducers only affects speed,
+never the result (Section 2.4).
+
 ### 2.3 Case-folding transducer T_case
 
 `build_case_folding_transducer()` builds M_case = (Q, Σ, Γ, δ, ω, q₀, F) with:
@@ -693,6 +787,20 @@ returns `None`).
 
 Example: `React.js` is read as R:r, e:e, a:a, c:c, t:t, ".":".", j:j, s:s and the result is
 `react.js`.
+
+Its graph has a single state with 57 loops; they are drawn as one arrow whose label
+stands for every `c : lower(c)` with c in Σ:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> q0: c : lower(c), for every c in Σ
+    q0 --> [*]
+```
+
+(`q0` is both the initial and the accepting state; a character outside Σ has no loop, so the
+token is rejected.)
 
 ### 2.4 Family transducers T_family
 
@@ -738,6 +846,174 @@ Sizes of the seven transducers (|δ| is the number of different lower-case spell
 | Version control | `build_vcs_transducer` | 2 | 1 | 4 |
 | Programming languages | `build_language_transducer` | 12 | 11 | 15 |
 | Data engineering | `build_data_transducer` | 3 | 2 | 5 |
+
+#### 2.4.1 Diagrams of the family transducers
+
+Each diagram is the graph of one T_family: the initial state q0, one accepting state f_C for every
+canonical name C, and one transition for every spelling s of C, drawn as `s : C` (input symbol
+`s`, output `C`). Spellings of the same canonical name share one arrow, one label per line. The
+diagrams are generated from the tables `*_VARIANTS` of `transducers.py`, so they list every
+transition of δ and ω (the tables that follow give the same information by state). Every state
+f_C is accepting and has no outgoing transition, so a word of length one is accepted and
+nothing longer is.
+
+**Web / Frontend / Backend** (`WEB_VARIANTS`, `build_web_transducer()`): |Q| = 10, |F| = 9, |δ| = 25.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_JAVASCRIPT: js : JAVASCRIPT<br/>javascript : JAVASCRIPT
+    q0 --> f_TYPESCRIPT: ts : TYPESCRIPT<br/>typescript : TYPESCRIPT
+    q0 --> f_REACT: react : REACT<br/>react.js : REACT<br/>reactjs : REACT
+    q0 --> f_NODE_JS: node : NODE_JS<br/>node.js : NODE_JS<br/>nodejs : NODE_JS
+    q0 --> f_ANGULAR: angular : ANGULAR<br/>angularjs : ANGULAR<br/>angular.js : ANGULAR
+    q0 --> f_VUE: vue : VUE<br/>vue.js : VUE<br/>vuejs : VUE
+    q0 --> f_SPRING_BOOT: spring boot : SPRING_BOOT<br/>springboot : SPRING_BOOT
+    q0 --> f_DJANGO: django : DJANGO
+    q0 --> f_REST_API: rest : REST_API<br/>rest api : REST_API<br/>rest apis : REST_API<br/>restful : REST_API<br/>restful api : REST_API<br/>restful apis : REST_API
+    f_JAVASCRIPT --> [*]
+    f_TYPESCRIPT --> [*]
+    f_REACT --> [*]
+    f_NODE_JS --> [*]
+    f_ANGULAR --> [*]
+    f_VUE --> [*]
+    f_SPRING_BOOT --> [*]
+    f_DJANGO --> [*]
+    f_REST_API --> [*]
+```
+
+**AI / ML / data libraries** (`AI_VARIANTS`, `build_ai_transducer()`): |Q| = 9, |F| = 8, |δ| = 21.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_PANDAS: pandas : PANDAS
+    q0 --> f_NUMPY: numpy : NUMPY<br/>num py : NUMPY
+    q0 --> f_SCIKIT_LEARN: scikit-learn : SCIKIT_LEARN<br/>scikit learn : SCIKIT_LEARN<br/>scikitlearn : SCIKIT_LEARN<br/>sklearn : SCIKIT_LEARN<br/>sk-learn : SCIKIT_LEARN
+    q0 --> f_TENSORFLOW: tensorflow : TENSORFLOW<br/>tensor flow : TENSORFLOW<br/>tf : TENSORFLOW
+    q0 --> f_PYTORCH: pytorch : PYTORCH<br/>py torch : PYTORCH<br/>torch : PYTORCH
+    q0 --> f_KERAS: keras : KERAS
+    q0 --> f_MATPLOTLIB: matplotlib : MATPLOTLIB
+    q0 --> f_ML_MODEL_DEVELOPMENT: machine-learning model development : ML_MODEL_DEVELOPMENT<br/>machine learning model development : ML_MODEL_DEVELOPMENT<br/>ml model development : ML_MODEL_DEVELOPMENT<br/>machine learning : ML_MODEL_DEVELOPMENT<br/>machine-learning : ML_MODEL_DEVELOPMENT
+    f_PANDAS --> [*]
+    f_NUMPY --> [*]
+    f_SCIKIT_LEARN --> [*]
+    f_TENSORFLOW --> [*]
+    f_PYTORCH --> [*]
+    f_KERAS --> [*]
+    f_MATPLOTLIB --> [*]
+    f_ML_MODEL_DEVELOPMENT --> [*]
+```
+
+**Databases** (`DB_VARIANTS`, `build_db_transducer()`): |Q| = 12, |F| = 11, |δ| = 22.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_SQL: sql : SQL
+    q0 --> f_NOSQL: nosql : NOSQL
+    q0 --> f_POSTGRESQL: postgresql : POSTGRESQL<br/>postgres : POSTGRESQL<br/>postgre sql : POSTGRESQL<br/>psql : POSTGRESQL
+    q0 --> f_MYSQL: mysql : MYSQL<br/>my sql : MYSQL
+    q0 --> f_MARIADB: mariadb : MARIADB
+    q0 --> f_SQLITE: sqlite : SQLITE<br/>sqlite3 : SQLITE
+    q0 --> f_SQL_SERVER: sql server : SQL_SERVER<br/>sqlserver : SQL_SERVER<br/>mssql : SQL_SERVER<br/>ms sql : SQL_SERVER
+    q0 --> f_ORACLE: oracle : ORACLE<br/>oracle db : ORACLE
+    q0 --> f_MONGODB: mongodb : MONGODB<br/>mongo : MONGODB<br/>mongo db : MONGODB
+    q0 --> f_REDIS: redis : REDIS
+    q0 --> f_CASSANDRA: cassandra : CASSANDRA
+    f_SQL --> [*]
+    f_NOSQL --> [*]
+    f_POSTGRESQL --> [*]
+    f_MYSQL --> [*]
+    f_MARIADB --> [*]
+    f_SQLITE --> [*]
+    f_SQL_SERVER --> [*]
+    f_ORACLE --> [*]
+    f_MONGODB --> [*]
+    f_REDIS --> [*]
+    f_CASSANDRA --> [*]
+```
+
+**Cloud / DevOps** (`DEVOPS_VARIANTS`, `build_devops_transducer()`): |Q| = 9, |F| = 8, |δ| = 14.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_DOCKER: docker : DOCKER
+    q0 --> f_KUBERNETES: kubernetes : KUBERNETES<br/>k8s : KUBERNETES<br/>kube : KUBERNETES
+    q0 --> f_TERRAFORM: terraform : TERRAFORM
+    q0 --> f_JENKINS: jenkins : JENKINS
+    q0 --> f_ANSIBLE: ansible : ANSIBLE
+    q0 --> f_AWS: aws : AWS<br/>amazon web services : AWS
+    q0 --> f_AZURE: azure : AZURE<br/>microsoft azure : AZURE
+    q0 --> f_GCP: gcp : GCP<br/>google cloud : GCP<br/>google cloud platform : GCP
+    f_DOCKER --> [*]
+    f_KUBERNETES --> [*]
+    f_TERRAFORM --> [*]
+    f_JENKINS --> [*]
+    f_ANSIBLE --> [*]
+    f_AWS --> [*]
+    f_AZURE --> [*]
+    f_GCP --> [*]
+```
+
+**Version control** (`VCS_VARIANTS`, `build_vcs_transducer()`): |Q| = 2, |F| = 1, |δ| = 4.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_GIT: git : GIT<br/>github : GIT<br/>gitlab : GIT<br/>bitbucket : GIT
+    f_GIT --> [*]
+```
+
+**Programming languages** (`LANGUAGE_VARIANTS`, `build_language_transducer()`): |Q| = 12, |F| = 11, |δ| = 15.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_PYTHON: python : PYTHON<br/>python3 : PYTHON
+    q0 --> f_JAVA: java : JAVA
+    q0 --> f_C: c : C
+    q0 --> f_C_PLUS_PLUS: c++ : C_PLUS_PLUS<br/>cpp : C_PLUS_PLUS
+    q0 --> f_C_SHARP: c#35; : C_SHARP<br/>csharp : C_SHARP
+    q0 --> f_GO: go : GO<br/>golang : GO
+    q0 --> f_RUST: rust : RUST
+    q0 --> f_KOTLIN: kotlin : KOTLIN
+    q0 --> f_SWIFT: swift : SWIFT
+    q0 --> f_PHP: php : PHP
+    q0 --> f_RUBY: ruby : RUBY
+    f_PYTHON --> [*]
+    f_JAVA --> [*]
+    f_C --> [*]
+    f_C_PLUS_PLUS --> [*]
+    f_C_SHARP --> [*]
+    f_GO --> [*]
+    f_RUST --> [*]
+    f_KOTLIN --> [*]
+    f_SWIFT --> [*]
+    f_PHP --> [*]
+    f_RUBY --> [*]
+```
+
+**Data engineering** (`DATA_VARIANTS`, `build_data_transducer()`): |Q| = 3, |F| = 2, |δ| = 5.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> q0
+    q0 --> f_SPARK: spark : SPARK<br/>apache spark : SPARK<br/>pyspark : SPARK
+    q0 --> f_AIRFLOW: airflow : AIRFLOW<br/>apache airflow : AIRFLOW
+    f_SPARK --> [*]
+    f_AIRFLOW --> [*]
+```
+
+#### 2.4.2 Tables of δ and ω
 
 The following tables give δ and ω: each row is a state f_C, the output C and the input symbols s
 with δ(q0, s) = f_C and ω(q0, s) = C.
@@ -858,8 +1134,20 @@ list of the profile (for example, Full Stack: `web_language`, `frontend`, `backe
 `database`, `api`, `vcs`). Let pos_P(k) be the index of k in the list of slots. For a record r
 with category k(r) and canonical name n(r), the sorting key is:
 
-- key_P(r) = (0, pos_P(k(r)), n(r)) if k(r) is a slot of P (**profile part**);
+- key_P(r) = (0, pos_P(k(r)), n(r)) if r belongs to a slot of P (**profile part**);
 - key_P(r) = (1, k(r), n(r)) otherwise (**remaining part**, noise for this profile).
+
+A record r belongs to a slot of P when k(r) is a slot of P and, if the slot is restricted, n(r)
+is one of the names that the slot admits. The restrictions (`SLOT_RESTRICTIONS`) exist because
+the languages accepted by the stage of a profile are fewer than the languages of the category
+`language`: Machine Learning reads only `PYTHON`; DevOps reads `PYTHON`, `GO`, `JAVA` and
+`RUBY`; Data Engineer reads `PYTHON`, `JAVA` and `GO`. Any other language (`C_PLUS_PLUS`,
+`RUST`, ...) goes to the remaining part, where the automaton of Stage 3 tolerates it. Without
+this rule `JAVA, PYTHON` would reach the automaton of Machine Learning in alphabetical order,
+and a valid resume would be rejected because `JAVA` would be read before the first stage. The
+other slots admit every name of their category, and `classifier.py` checks when it is imported
+that, for the four profiles, the names placed in the profile part are exactly the alphabet of
+the automaton.
 
 Keys are compared lexicographically, with the natural order of integers and of strings
 (alphabetical). `sort_records_by_profile` sorts the records with key_P. Since n is injective on
@@ -1242,8 +1530,8 @@ it. The automata and their examples are verified by `tests/test_classification.p
 
 Stage 4 (`resumelens/grammar/`) defines the domain-specific language (DSL) in which the
 result of the first three stages is written down: one document describes **one candidate**,
-with the contact data of Stage 1, the normalized skills of Stage 2 and one formal verdict
-for each of the four profiles of Stage 3. The language is specified by the textX grammar
+with the contact data and the optional profile summary of Stage 1, the normalized skills of
+Stage 2 and one formal verdict for each of the four profiles of Stage 3. The language is specified by the textX grammar
 `resumelens/grammar/resume_grammar.tx` (source of truth of this section). `parser.py`
 writes a document from the pipeline data, loads the metamodel with
 `textx.metamodel_from_file` and checks that a document belongs to the language
@@ -1303,17 +1591,17 @@ they only tell textX which attribute of the model object receives the matched te
 
 ### 4.3 Terminal symbols $`\Sigma`$
 
-The grammar has $`|\Sigma| = 36`$ terminal symbols: 24 keywords, 6 punctuation symbols and
+The grammar has $`|\Sigma| = 44`$ terminal symbols: 32 keywords, 6 punctuation symbols and
 6 token classes. Every literal of the `.tx` file appears in exactly one of the first three
 tables.
 
-**Structural keywords (18).** They open a block or announce a field.
+**Structural keywords (26).** They open a block or announce a field.
 
 | Group | Keywords |
 |---|---|
-| Document and blocks | `candidate`, `personal`, `education`, `experience`, `skills`, `evaluation` |
-| Personal fields | `name`, `email`, `phone`, `link` |
-| Entries | `study`, `job`, `skill`, `category`, `raw` |
+| Document and blocks | `candidate`, `personal`, `summary`, `education`, `experience`, `skills`, `evaluation` |
+| Personal fields | `name`, `email`, `phone`, `location`, `current_role`, `link` |
+| Entries | `paragraph`, `study`, `job`, `role`, `company`, `period`, `highlight`, `skill`, `category`, `raw` |
 | Profile results | `profile`, `matched`, `details` |
 
 **Verdict keywords (2) and profile identifiers (4).**
@@ -1353,18 +1641,20 @@ verdict, and so on).
 
 ### 4.4 Variables $`V`$
 
-The `.tx` file has 21 rules. Six of them are lexical (the five match rules of Section 4.3
-and `Comment`) and are terminal classes here. The other 15 are the variables of the
+The `.tx` file has 23 rules. Six of them are lexical (the five match rules of Section 4.3
+and `Comment`) and are terminal classes here. The other 17 are the variables of the
 grammar:
 
 | Variable | Kind in textX | Productions | Role |
 |---|---|---|---|
-| $`\mathsf{CandidateReport}`$ | object rule, **start symbol** | 1 | Whole document: the five blocks, in this order |
-| $`\mathsf{PersonalInfo}`$ | object rule | 1 | Name (mandatory), e-mail, phone (optional), links (repeated) |
+| $`\mathsf{CandidateReport}`$ | object rule, **start symbol** | 1 | Whole document: the personal block, an optional summary and the four other blocks, in this order |
+| $`\mathsf{PersonalInfo}`$ | object rule | 1 | Name (mandatory), e-mail, phone, location, current role (optional), links (repeated) |
+| $`\mathsf{SummarySection}`$ | object rule | 1 | Zero or more summary paragraphs |
+| $`\mathsf{SummaryParagraph}`$ | object rule | 1 | `paragraph` followed by a string |
 | $`\mathsf{EducationSection}`$ | object rule | 1 | Zero or more education entries |
 | $`\mathsf{EducationEntry}`$ | object rule | 1 | `study` followed by a string |
 | $`\mathsf{ExperienceSection}`$ | object rule | 1 | Zero or more experience entries |
-| $`\mathsf{ExperienceEntry}`$ | object rule | 1 | `job` followed by a string |
+| $`\mathsf{ExperienceEntry}`$ | object rule | 1 | `job` followed by a string, optionally its role, company and period, and any number of highlights |
 | $`\mathsf{SkillSection}`$ | object rule | 1 | One or more skill entries |
 | $`\mathsf{SkillEntry}`$ | object rule | 1 | Canonical name, category and raw text of one skill |
 | $`\mathsf{EvaluationSection}`$ | object rule | 1 | The four profile results, in the order of the roadmap |
@@ -1385,8 +1675,8 @@ uses the four concrete rules directly. In grammar terms it is an **unreachable**
 file, and it does not change $`L(G)`$.
 
 Repetition and optional parts are not variables in EBNF, but plain productions need them.
-Section 4.6 adds 10 **auxiliary variables**, so $`|V| = 15 + 10 = 25`$ and
-$`|P| = 37`$ (19 productions for the variables above, 18 for the auxiliary ones).
+Section 4.6 adds 16 **auxiliary variables**, so $`|V| = 17 + 16 = 33`$ and
+$`|P| = 51`$ (21 productions for the variables above, 30 for the auxiliary ones).
 
 ### 4.5 EBNF specification
 
@@ -1395,7 +1685,8 @@ Start symbol: $`S = \mathsf{CandidateReport}`$. This is the content of
 
 ```ebnf
 CandidateReport   = 'candidate' '{'
-                        PersonalInfo EducationSection ExperienceSection
+                        PersonalInfo [ SummarySection ]
+                        EducationSection ExperienceSection
                         SkillSection EvaluationSection
                     '}' ;
 
@@ -1403,14 +1694,21 @@ PersonalInfo      = 'personal' '{'
                         'name' ':' STRING
                         [ 'email' ':' Email ]
                         [ 'phone' ':' Phone ]
+                        [ 'location' ':' STRING ]
+                        [ 'current_role' ':' STRING ]
                         { 'link' ':' Url }
                     '}' ;
+
+SummarySection    = 'summary' '{' { SummaryParagraph } '}' ;
+SummaryParagraph  = 'paragraph' STRING ;
 
 EducationSection  = 'education' '{' { EducationEntry } '}' ;
 EducationEntry    = 'study' STRING ;
 
 ExperienceSection = 'experience' '{' { ExperienceEntry } '}' ;
-ExperienceEntry   = 'job' STRING ;
+ExperienceEntry   = 'job' STRING
+                    [ 'role' STRING 'company' STRING 'period' STRING ]
+                    { 'highlight' STRING } ;
 
 SkillSection      = 'skills' '{' SkillEntry { SkillEntry } '}' ;
 SkillEntry        = 'skill' CanonicalName 'category' Category 'raw' STRING ;
@@ -1451,8 +1749,10 @@ Each EBNF operator is replaced by auxiliary variables, with the usual rules: an 
 $`[A]`$ becomes $`X \to A \mid \varepsilon`$ and a repetition $`\{A\}`$ becomes
 $`X \to A\,X \mid \varepsilon`$. The auxiliary variables are
 
-$`\mathsf{OptEmail}`$, $`\mathsf{OptPhone}`$, $`\mathsf{LinkList}`$,
-$`\mathsf{EduEntries}`$, $`\mathsf{ExpEntries}`$, $`\mathsf{SkillList}`$,
+$`\mathsf{OptSummary}`$, $`\mathsf{OptEmail}`$, $`\mathsf{OptPhone}`$,
+$`\mathsf{OptLocation}`$, $`\mathsf{OptRole}`$, $`\mathsf{LinkList}`$,
+$`\mathsf{ParagraphList}`$, $`\mathsf{EduEntries}`$, $`\mathsf{ExpEntries}`$,
+$`\mathsf{JobDetails}`$, $`\mathsf{HighlightList}`$, $`\mathsf{SkillList}`$,
 $`\mathsf{SkillMore}`$, $`\mathsf{MatchedOpt}`$, $`\mathsf{MatchedList}`$ and
 $`\mathsf{MatchedTail}`$.
 
@@ -1462,17 +1762,25 @@ variable (Section 4.8). The productions are:
 
 ```math
 \begin{aligned}
-\mathsf{CandidateReport} &\to \mathtt{candidate}\ \mathtt{\{}\ \mathsf{PersonalInfo}\ \mathsf{EducationSection}\ \mathsf{ExperienceSection}\ \mathsf{SkillSection}\ \mathsf{EvaluationSection}\ \mathtt{\}} \\[4pt]
-\mathsf{PersonalInfo} &\to \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathsf{OptEmail}\ \mathsf{OptPhone}\ \mathsf{LinkList}\ \mathtt{\}} \\
+\mathsf{CandidateReport} &\to \mathtt{candidate}\ \mathtt{\{}\ \mathsf{PersonalInfo}\ \mathsf{OptSummary}\ \mathsf{EducationSection}\ \mathsf{ExperienceSection}\ \mathsf{SkillSection}\ \mathsf{EvaluationSection}\ \mathtt{\}} \\[4pt]
+\mathsf{PersonalInfo} &\to \mathtt{personal}\ \mathtt{\{}\ \mathtt{name}\ \mathtt{:}\ \mathbf{STRING}\ \mathsf{OptEmail}\ \mathsf{OptPhone}\ \mathsf{OptLocation}\ \mathsf{OptRole}\ \mathsf{LinkList}\ \mathtt{\}} \\
 \mathsf{OptEmail} &\to \mathtt{email}\ \mathtt{:}\ \mathbf{Email} \mid \varepsilon \\
 \mathsf{OptPhone} &\to \mathtt{phone}\ \mathtt{:}\ \mathbf{Phone} \mid \varepsilon \\
+\mathsf{OptLocation} &\to \mathtt{location}\ \mathtt{:}\ \mathbf{STRING} \mid \varepsilon \\
+\mathsf{OptRole} &\to \mathtt{current\_role}\ \mathtt{:}\ \mathbf{STRING} \mid \varepsilon \\
 \mathsf{LinkList} &\to \mathtt{link}\ \mathtt{:}\ \mathbf{Url}\ \mathsf{LinkList} \mid \varepsilon \\[4pt]
+\mathsf{OptSummary} &\to \mathsf{SummarySection} \mid \varepsilon \\
+\mathsf{SummarySection} &\to \mathtt{summary}\ \mathtt{\{}\ \mathsf{ParagraphList}\ \mathtt{\}} \\
+\mathsf{ParagraphList} &\to \mathsf{SummaryParagraph}\ \mathsf{ParagraphList} \mid \varepsilon \\
+\mathsf{SummaryParagraph} &\to \mathtt{paragraph}\ \mathbf{STRING} \\[4pt]
 \mathsf{EducationSection} &\to \mathtt{education}\ \mathtt{\{}\ \mathsf{EduEntries}\ \mathtt{\}} \\
 \mathsf{EduEntries} &\to \mathsf{EducationEntry}\ \mathsf{EduEntries} \mid \varepsilon \\
 \mathsf{EducationEntry} &\to \mathtt{study}\ \mathbf{STRING} \\[4pt]
 \mathsf{ExperienceSection} &\to \mathtt{experience}\ \mathtt{\{}\ \mathsf{ExpEntries}\ \mathtt{\}} \\
 \mathsf{ExpEntries} &\to \mathsf{ExperienceEntry}\ \mathsf{ExpEntries} \mid \varepsilon \\
-\mathsf{ExperienceEntry} &\to \mathtt{job}\ \mathbf{STRING} \\[4pt]
+\mathsf{ExperienceEntry} &\to \mathtt{job}\ \mathbf{STRING}\ \mathsf{JobDetails}\ \mathsf{HighlightList} \\
+\mathsf{JobDetails} &\to \mathtt{role}\ \mathbf{STRING}\ \mathtt{company}\ \mathbf{STRING}\ \mathtt{period}\ \mathbf{STRING} \mid \varepsilon \\
+\mathsf{HighlightList} &\to \mathtt{highlight}\ \mathbf{STRING}\ \mathsf{HighlightList} \mid \varepsilon \\[4pt]
 \mathsf{SkillSection} &\to \mathtt{skills}\ \mathtt{\{}\ \mathsf{SkillList}\ \mathtt{\}} \\
 \mathsf{SkillList} &\to \mathsf{SkillEntry}\ \mathsf{SkillMore} \\
 \mathsf{SkillMore} &\to \mathsf{SkillEntry}\ \mathsf{SkillMore} \mid \varepsilon \\
@@ -1490,7 +1798,7 @@ variable (Section 4.8). The productions are:
 \end{aligned}
 ```
 
-Counting each alternative as a production, this gives the 37 productions of Section 4.4.
+Counting each alternative as a production, this gives the 51 productions of Section 4.4.
 
 ### 4.7 Derivations
 
@@ -1511,6 +1819,23 @@ derives from $`\mathsf{PersonalInfo}`$ as
 
 with $`\mathbf{STRING} = \texttt{"A"}`$ and $`\mathbf{Email} = \texttt{a@b.co}`$. The last two steps
 use $`\mathsf{OptPhone} \to \varepsilon`$ and $`\mathsf{LinkList} \to \varepsilon`$.
+
+*A structured entry.* The entry
+`job "Dev, Acme (2020 - 2021)" role "Dev" company "Acme" period "2020 - 2021" highlight "Built A."`
+derives from $`\mathsf{ExperienceEntry}`$ as
+
+```math
+\begin{aligned}
+\mathsf{ExperienceEntry} &\Rightarrow \mathtt{job}\ \mathbf{STRING}\ \mathsf{JobDetails}\ \mathsf{HighlightList} \\
+&\Rightarrow \mathtt{job}\ \mathbf{STRING}\ \mathtt{role}\ \mathbf{STRING}\ \mathtt{company}\ \mathbf{STRING}\ \mathtt{period}\ \mathbf{STRING}\ \mathsf{HighlightList} \\
+&\Rightarrow \mathtt{job}\ \mathbf{STRING}\ \mathtt{role}\ \mathbf{STRING}\ \mathtt{company}\ \mathbf{STRING}\ \mathtt{period}\ \mathbf{STRING}\ \mathtt{highlight}\ \mathbf{STRING}\ \mathsf{HighlightList} \\
+&\Rightarrow \mathtt{job}\ \mathbf{STRING}\ \mathtt{role}\ \mathbf{STRING}\ \mathtt{company}\ \mathbf{STRING}\ \mathtt{period}\ \mathbf{STRING}\ \mathtt{highlight}\ \mathbf{STRING}
+\end{aligned}
+```
+
+The plain entry `job "3 years of experience"` uses $`\mathsf{JobDetails} \to \varepsilon`$ and
+$`\mathsf{HighlightList} \to \varepsilon`$. A `role` without its `company` and `period`, or a
+`company` before the `role`, has no derivation: $`\mathsf{JobDetails}`$ is all or nothing.
 
 *A list with separator.* The text `[JAVASCRIPT, GIT]` (the part between the brackets of a
 result) derives from $`\mathsf{MatchedOpt}`$ as
@@ -1533,11 +1858,17 @@ follows the variable:
 
 | Variable | Alternatives start with | Empty alternative when next is |
 |---|---|---|
-| $`\mathsf{OptEmail}`$ | `email` | `phone`, `link`, `}` |
-| $`\mathsf{OptPhone}`$ | `phone` | `link`, `}` |
+| $`\mathsf{OptSummary}`$ | `summary` | `education` |
+| $`\mathsf{OptEmail}`$ | `email` | `phone`, `location`, `current_role`, `link`, `}` |
+| $`\mathsf{OptPhone}`$ | `phone` | `location`, `current_role`, `link`, `}` |
+| $`\mathsf{OptLocation}`$ | `location` | `current_role`, `link`, `}` |
+| $`\mathsf{OptRole}`$ | `current_role` | `link`, `}` |
 | $`\mathsf{LinkList}`$ | `link` | `}` |
+| $`\mathsf{ParagraphList}`$ | `paragraph` | `}` |
 | $`\mathsf{EduEntries}`$ | `study` | `}` |
 | $`\mathsf{ExpEntries}`$ | `job` | `}` |
+| $`\mathsf{JobDetails}`$ | `role` | `highlight`, `job`, `}` |
+| $`\mathsf{HighlightList}`$ | `highlight` | `job`, `}` |
 | $`\mathsf{SkillMore}`$ | `skill` | `}` |
 | $`\mathsf{MatchedOpt}`$ | $`\mathbf{CanonicalName}`$ | `]` |
 | $`\mathsf{MatchedTail}`$ | `,` | `]` |
@@ -1555,8 +1886,9 @@ decided by the next terminal, the ordered choice and the alternation of a CFG ac
 same documents, so the language recognized by textX is $`L(G)`$.
 
 **The language is context-free by definition and also regular.** No reachable variable is
-recursive except through list repetition ($`\mathsf{LinkList}`$, $`\mathsf{EduEntries}`$,
-$`\mathsf{ExpEntries}`$, $`\mathsf{SkillMore}`$, $`\mathsf{MatchedTail}`$, which are
+recursive except through list repetition ($`\mathsf{LinkList}`$,
+$`\mathsf{ParagraphList}`$, $`\mathsf{EduEntries}`$, $`\mathsf{ExpEntries}`$,
+$`\mathsf{HighlightList}`$, $`\mathsf{SkillMore}`$, $`\mathsf{MatchedTail}`$, which are
 right-linear), and the blocks are nested to a fixed depth (two levels of braces). Replacing
 each variable by its right-hand side gives a regular expression for $`L(G)`$ over tokens.
 This is consistent with the rest of the project (the lexical level is regular, Sections 1
@@ -1565,7 +1897,9 @@ it is written as a CFG because that is the model of Stage 4 and because it is th
 textX accepts.
 
 **What the grammar does not check.** The grammar fixes the structure, the mandatory blocks,
-the order and the shape of the lexemes. Constraints between distant parts of the document
+the order and the shape of the lexemes. Location, current role, summary and the structure of a
+job are part of the language, but they only describe the candidate: no verdict depends on
+them. Constraints between distant parts of the document
 are not part of the language: that a $`\mathbf{CanonicalName}`$ belongs to the output
 alphabet of Stage 2 (`UNKNOWN` is a valid $`\mathbf{CanonicalName}`$), that the names in
 `matched` appear in the `skills` block, that a verdict agrees with its `details`, or that
@@ -1579,10 +1913,11 @@ terminal, including keywords, braces and auxiliary variables. textX does not ret
 tree: when it matches a document it builds the **abstract syntax tree (AST)** of the
 document, a tree of Python objects (the *model*), by these rules:
 
-1. Each application of an object rule creates one object of the class of that rule: 13
-   classes in total ($`\mathsf{CandidateReport}`$, $`\mathsf{PersonalInfo}`$, the two
-   sections and the two entries of education and experience, $`\mathsf{SkillSection}`$,
-   $`\mathsf{SkillEntry}`$, $`\mathsf{EvaluationSection}`$ and the four results).
+1. Each application of an object rule creates one object of the class of that rule: 15
+   classes in total ($`\mathsf{CandidateReport}`$, $`\mathsf{PersonalInfo}`$,
+   $`\mathsf{SummarySection}`$, $`\mathsf{SummaryParagraph}`$, the two sections and the two
+   entries of education and experience, $`\mathsf{SkillSection}`$, $`\mathsf{SkillEntry}`$,
+   $`\mathsf{EvaluationSection}`$ and the four results).
 2. Each assignment (`attr=`, `attr+=`, `attr*=`) stores the matched text, or the child
    object, in an attribute. `+=` and `*=` make a list. The values of $`\mathsf{Verdict}`$ and
    of the token classes are strings.
@@ -1598,16 +1933,25 @@ synthetic resumes), the AST is:
 ```text
 CandidateReport
 ├── personal: PersonalInfo
-│   ├── name   = "WEDNESDAY ADDAMS"
-│   ├── email  = "wednesday.addams@nevermore.edu"
-│   ├── phone  = "+1 555 666 7777"
-│   └── links  = ["https://www.linkedin.com/in/wednesday-addams",
-│                 "https://github.com/wednesday-addams"]
+│   ├── name         = "WEDNESDAY ADDAMS"
+│   ├── email        = "wednesday.addams@nevermore.edu"
+│   ├── phone        = "+1 555 666 7777"
+│   ├── location     = "Nevermore Academy, Jericho"
+│   ├── current_role = "Student and independent investigator"
+│   └── links        = ["https://www.linkedin.com/in/wednesday-addams",
+│                       "https://github.com/wednesday-addams"]
+├── summary: SummarySection
+│   └── paragraphs = [SummaryParagraph(text="3 years of experience developing web applications."),
+│                     SummaryParagraph(text="Her work at Nevermore Academy has involved ...")]
 ├── education: EducationSection
 │   └── entries = [EducationEntry(description="B.S. in Computer Science"),
 │                  EducationEntry(description="Nevermore University (2019 - 2023)")]
 ├── experience: ExperienceSection
-│   └── entries = [ExperienceEntry(description="Full Stack Developer, Raven Labs (2023 - 2026)")]
+│   └── entries = [ExperienceEntry(description="3 years of experience developing web applications"),
+│                  ExperienceEntry(description="Full Stack Developer, Raven Labs (2023 - 2026)",
+│                      role="Full Stack Developer", company="Raven Labs", period="2023 - 2026",
+│                      highlights=["Built a React.js dashboard backed by a NodeJS REST API.",
+│                                  "Designed Postgres schemas and managed releases with Git."])]
 ├── skills: SkillSection
 │   └── skills = [SkillEntry(canonical="JAVASCRIPT",  category="web_language", raw="JS"),
 │                 SkillEntry(canonical="REACT",       category="frontend",     raw="React.js"),
@@ -1631,14 +1975,99 @@ Attributes of each class:
 
 | Class | Attributes | Multiplicity |
 |---|---|---|
-| `CandidateReport` | `personal`, `education`, `experience`, `skills`, `evaluation` | exactly one of each |
-| `PersonalInfo` | `name` (string), `email`, `phone` (strings), `links` (list of strings) | `name` 1; `email`, `phone` 0..1; `links` 0..n |
+| `CandidateReport` | `personal`, `summary`, `education`, `experience`, `skills`, `evaluation` | exactly one of each, except `summary` (0..1) |
+| `PersonalInfo` | `name` (string), `email`, `phone`, `location`, `current_role` (strings), `links` (list of strings) | `name` 1; `email`, `phone`, `location`, `current_role` 0..1; `links` 0..n |
+| `SummarySection` | `paragraphs` (list of `SummaryParagraph`) | 0..n |
+| `SummaryParagraph` | `text` (string) | 1 |
 | `EducationSection`, `ExperienceSection` | `entries` (list of `EducationEntry` / `ExperienceEntry`) | 0..n |
-| `EducationEntry`, `ExperienceEntry` | `description` (string) | 1 |
+| `EducationEntry` | `description` (string) | 1 |
+| `ExperienceEntry` | `description` (string); `role`, `company`, `period` (strings); `highlights` (list of strings) | `description` 1; `role`, `company`, `period` all present or all absent; `highlights` 0..n |
 | `SkillSection` | `skills` (list of `SkillEntry`) | 1..n |
 | `SkillEntry` | `canonical`, `category`, `raw` (strings) | 1 each |
 | `EvaluationSection` | `results` (list of the four result objects) | exactly 4, in the order of the roadmap |
 | `FullStackResult`, `MachineLearningResult`, `DevOpsResult`, `DataEngineerResult` | `name` (the profile identifier), `verdict` (`ACCEPTED` or `REJECTED`), `matched` (list of strings), `details` (string) | `matched` 0..n; the others 1 |
+
+The structure of the model, with the multiplicity of each attribute, is the following class
+diagram (a composition arrow is labeled with the attribute that holds the child objects):
+
+```mermaid
+classDiagram
+    direction LR
+    class CandidateReport
+    class PersonalInfo {
+        +string name
+        +string email
+        +string phone
+        +string location
+        +string current_role
+        +List~string~ links
+    }
+    class SummarySection
+    class SummaryParagraph {
+        +string text
+    }
+    class EducationSection
+    class EducationEntry {
+        +string description
+    }
+    class ExperienceSection
+    class ExperienceEntry {
+        +string description
+        +string role
+        +string company
+        +string period
+        +List~string~ highlights
+    }
+    class SkillSection
+    class SkillEntry {
+        +string canonical
+        +string category
+        +string raw
+    }
+    class EvaluationSection
+    class ProfileResult {
+        <<abstract>>
+    }
+    class FullStackResult {
+        +string name
+        +string verdict
+        +List~string~ matched
+        +string details
+    }
+    class MachineLearningResult {
+        +string name
+        +string verdict
+        +List~string~ matched
+        +string details
+    }
+    class DevOpsResult {
+        +string name
+        +string verdict
+        +List~string~ matched
+        +string details
+    }
+    class DataEngineerResult {
+        +string name
+        +string verdict
+        +List~string~ matched
+        +string details
+    }
+    CandidateReport *-- "1" PersonalInfo : personal
+    CandidateReport *-- "0..1" SummarySection : summary
+    CandidateReport *-- "1" EducationSection : education
+    CandidateReport *-- "1" ExperienceSection : experience
+    CandidateReport *-- "1" SkillSection : skills
+    CandidateReport *-- "1" EvaluationSection : evaluation
+    SummarySection *-- "0..n" SummaryParagraph : paragraphs
+    EducationSection *-- "0..n" EducationEntry : entries
+    ExperienceSection *-- "0..n" ExperienceEntry : entries
+    SkillSection *-- "1..n" SkillEntry : skills
+    EvaluationSection *-- "4" ProfileResult : results
+    ProfileResult <|-- FullStackResult
+    ProfileResult <|-- MachineLearningResult
+    ProfileResult <|-- DevOpsResult
+    ProfileResult <|-- DataEngineerResult
+```
 
 The four result classes are specializations of the abstract rule $`\mathsf{ProfileResult}`$,
 so they share a common type in the metamodel even though $`\mathsf{ProfileResult}`$ is not
@@ -1660,7 +2089,10 @@ The AST maps back to the pipeline data attribute by attribute:
 | AST | Pipeline data |
 |---|---|
 | `personal.name`, `.email`, `.phone`, `.links` | `CandidateInfo.name`, `.email`, `.phone`, `.links` |
+| `personal.location`, `personal.current_role` | `CandidateInfo.location`, `.current_role` |
+| `summary.paragraphs[i].text` | `CandidateInfo.summary[i]` |
 | `education.entries[i].description`, `experience.entries[i].description` | `CandidateInfo.education[i]`, `.experience[i]` |
+| `experience.entries[i].role`, `.company`, `.period`, `.highlights` | `JobEntry.role`, `.company`, `.period`, `.highlights` in `CandidateInfo.jobs` (the entry whose `description` is the same text) |
 | `skills.skills[i].canonical`, `.category`, `.raw` | `SkillRecord.canonical_name`, `.category`, `.raw_name` |
 | `evaluation.results[i].name`, `.verdict`, `.matched`, `.details` | `EvaluationResult.profile_name` (written as an identifier: `Full Stack Developer` becomes `FULL_STACK_DEVELOPER`), `.is_accepted` (`verdict == "ACCEPTED"`), `.matched_sequence`, `.details` |
 

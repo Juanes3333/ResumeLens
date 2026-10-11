@@ -11,10 +11,14 @@ from resumelens.core.models import CandidateInfo, RawResumeData
 from resumelens.extraction import (
     extract_contact,
     extract_education,
+    extract_current_role,
     extract_experience,
+    extract_jobs,
+    extract_location,
     extract_name,
     extract_resume,
     extract_skills,
+    extract_summary,
     extract_technologies,
     split_sections,
 )
@@ -284,6 +288,66 @@ def test_skills_never_leak_separators_or_trailing_periods():
 
 def test_skills_without_section_is_empty():
     assert extract_skills("Summary:\nI know Python and Git.") == []
+
+
+# ---------------------------------------------------------------------------
+# Raw skills — other layouts of the section
+# ---------------------------------------------------------------------------
+PDF_SKILLS = ["JS", "React.js", "NodeJS", "Postgres", "Git"]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Wednesday Addams\nTechnical Skills:\nJS, React.js, NodeJS, Postgres, Git.\n",
+        "Wednesday Addams\nTechnical Skills: JS, React.js, NodeJS, Postgres, Git.\n",
+        "Wednesday Addams\nTechnical Skills\nJS, React.js, NodeJS, Postgres, Git.\n",
+        "Wednesday Addams\nSkills: JS, React.js, NodeJS, Postgres, Git.\n",
+        "Wednesday Addams\nTechnologies:\nJS, React.js, NodeJS, Postgres, Git.\n",
+        "Wednesday Addams\nTech Stack: JS | React.js | NodeJS | Postgres | Git\n",
+        "Wednesday Addams\nTechnical  Skills:\n- JS\n- React.js\n* NodeJS\n+ Postgres\n- Git\n",
+        "Wednesday Addams\nTECHNICAL SKILLS\n• JS\n• React.js\n• NodeJS\n• Postgres\n• Git\n",
+        "Wednesday Addams\nTechnical Skills: JS · React.js · NodeJS · Postgres · Git\n",
+    ],
+)
+def test_skills_accept_other_layouts_of_the_section(text):
+    assert extract_skills(text) == PDF_SKILLS
+
+
+def test_skills_inline_content_stops_at_next_section():
+    text = "Technical Skills: Python, Git\nExperience:\nDev, Acme (2020 - 2021)\n"
+    assert extract_skills(text) == ["Python", "Git"]
+
+
+def test_skill_list_markers_need_a_space_and_hyphens_stay_inside_tokens():
+    assert extract_skills("Skills:\n- C++\n- .NET\n- Scikit-learn\n-Python\n") == [
+        "C++",
+        ".NET",
+        "Scikit-learn",
+        "-Python",
+    ]
+
+
+def test_header_without_colon_must_be_the_whole_line():
+    assert extract_skills("Summary:\nSkills are important to me.\n") == []
+    assert extract_skills("Summary:\nMy technical skills include Python.\n") == []
+
+
+def test_aliases_of_experience_and_contact_headers():
+    text = (
+        "Ana Gomez\nContact Information:\nana@mail.co\nProfessional Experience:\n"
+        "Dev, Acme (2020 - 2021)\n"
+    )
+    sections = split_sections(text)
+    assert sections["contact"].strip() == "ana@mail.co"
+    assert sections["experience"].strip() == "Dev, Acme (2020 - 2021)"
+    assert extract_contact(text)["email"] == "ana@mail.co"
+    assert extract_experience(text) == ["Dev, Acme (2020 - 2021)"]
+
+
+def test_extract_resume_reads_skills_of_an_inline_header():
+    text = "Mary Jane Watson\nTechnical Skills: Python, Pandas, NumPy, Scikit-learn, SQL, Git.\n"
+    assert extract_resume(text).raw_skills == ["Python", "Pandas", "NumPy", "Scikit-learn", "SQL", "Git"]
 
 
 # ---------------------------------------------------------------------------
@@ -635,3 +699,76 @@ def test_education_drops_lines_without_degree_institution_or_period():
 
 def test_education_keeps_a_line_with_only_a_period():
     assert extract_education("Education:\nBootcamp (2020 - 2021)\n") == ["Bootcamp (2020 - 2021)"]
+
+
+# ---------------------------------------------------------------------------
+# Report details — location, current role, summary and jobs
+# ---------------------------------------------------------------------------
+DETAILS = {
+    "fullstack": ("Nevermore Academy, Jericho", "Student and independent investigator", "Full Stack Developer", "Raven Labs", "2023 - 2026"),
+    "ml": ("New York, USA", "Machine Learning Engineer at Oscorp Analytics", "Machine Learning Engineer", "Oscorp Analytics", "2024 - 2026"),
+    "devops": ("Queens, New York", "DevOps Engineer at Stark Cloud", "DevOps Engineer", "Stark Cloud", "2023 - 2026"),
+    "data": ("Brooklyn, New York", "Data Engineer at Oscorp Data", "Data Engineer", "Oscorp Data", "2023 - 2026"),
+}
+
+
+@pytest.mark.parametrize("alias", sorted(DETAILS))
+def test_report_details_of_each_valid_resume(resume_texts, alias):
+    location, current_role, role, company, period = DETAILS[alias]
+    info = extract_resume(resume_texts[alias]).candidate_info
+    assert info.location == location
+    assert info.current_role == current_role
+    assert len(info.summary) == 2 and info.summary[0].endswith(".")
+    assert len(info.jobs) == 1
+    job = info.jobs[0]
+    assert (job.role, job.company, job.period) == (role, company, period)
+    assert job.description == f"{role}, {company} ({period})"
+    assert len(job.highlights) == 2 and all(h.endswith(".") for h in job.highlights)
+    assert job.description in info.experience
+
+
+def test_report_details_of_the_invalid_resume_are_empty(resume_texts):
+    info = extract_resume(resume_texts["invalid"]).candidate_info
+    assert (info.location, info.current_role, info.summary, info.jobs) == ("", "", [], [])
+
+
+def test_location_and_current_role_prefer_the_contact_section():
+    text = "Ana Gomez\nLocation: Cali\n\nContact:\nLocation: Bogota\nCurrent role: Dev\n"
+    assert extract_location(text) == "Bogota"
+    assert extract_current_role(text) == "Dev"
+
+
+def test_location_falls_back_to_the_whole_text_and_skips_empty_values():
+    assert extract_location("Ana Gomez\nLocation: Cali\n") == "Cali"
+    assert extract_location("Contact:\nLocation:\n\nLocation: Cali\n") == "Cali"
+    assert extract_location("no location here") == ""
+    assert extract_current_role("no role here") == ""
+
+
+def test_summary_splits_paragraphs_and_collapses_whitespace():
+    text = "Summary:\nFirst   line\ncontinues here.\n\n\nSecond paragraph.\n\nTechnical Skills:\nPython\n"
+    assert extract_summary(text) == ["First line continues here.", "Second paragraph."]
+    assert extract_summary("Technical Skills:\nPython") == []
+
+
+def test_jobs_keep_the_bullets_of_each_entry_apart():
+    text = (
+        "Experience:\n"
+        "Dev, Acme (2020 - 2021)\n- Built A.\n* Built B.\n"
+        "QA Engineer at Globant (Jan 2021 - Present)\n\u2022 Tested C.\n"
+        "Not an entry\n- Orphan bullet.\n"
+    )
+    jobs = extract_jobs(text)
+    assert [(j.role, j.company, j.period) for j in jobs] == [
+        ("Dev", "Acme", "2020 - 2021"),
+        ("QA Engineer", "Globant", "Jan 2021 - Present"),
+    ]
+    assert jobs[0].highlights == ["Built A.", "Built B."]
+    # A line without a marker is not a bullet; a bullet belongs to the entry that precedes it.
+    assert jobs[1].highlights == ["Tested C.", "Orphan bullet."]
+
+
+def test_jobs_without_the_section_or_bullets():
+    assert extract_jobs("Summary:\nnothing") == []
+    jobs = extract_jobs("Experience:\nDev, Acme (2020 - 2021)\n")
+    assert jobs[0].highlights == []

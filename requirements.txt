@@ -1,4 +1,5 @@
-pyformlang
-textx
-pytest
-pydot
+pyformlang==1.0.11
+textx==4.4.0
+pytest==9.1.1
+pydot==4.0.1
+streamlit==1.65.0

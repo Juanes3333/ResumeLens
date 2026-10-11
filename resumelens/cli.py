@@ -103,7 +103,20 @@ def run_pipeline(cv_path: Path) -> PipelineRun:
         UnicodeDecodeError: If the file is not UTF-8 text.
     """
     path = Path(cv_path)
-    resume = extract_resume(read_resume_file(path))
+    return run_pipeline_text(read_resume_file(path), path)
+
+
+def run_pipeline_text(text: str, source: Path = Path("<text>")) -> PipelineRun:
+    """Run the four stages on the text of a resume (the same as :func:`run_pipeline`).
+
+    It is the entry point for callers that do not have a file, such as the web interface.
+
+    Args:
+        text: Plain text of the resume.
+        source: Label stored in ``PipelineRun.cv_path`` (the path or the name of the upload).
+    """
+    path = Path(source)
+    resume = extract_resume(text)
     normalization = normalize_with_report(resume.raw_skills)
     sequences = {profile: sort_by_profile(normalization.records, profile) for profile in PROFILES}
     report = classify_all(normalization.records)

@@ -2,8 +2,8 @@
 
 Software design document (deliverable 2a: *Design of modules — functions, inputs-outputs*).
 It describes the architecture, the data flow between the four formal stages and the
-input/output contracts of each module. Modules marked **[planned]** are implemented in later
-commits; those marked **[implemented]** are already in the repository.
+input/output contracts of each module. All the modules described here are marked
+**[implemented]** and exist in the repository.
 
 ## 1. Scope and principles
 
@@ -38,9 +38,18 @@ ResumeLens/
 │   │   ├── transducers.py
 │   │   ├── normalizer.py
 │   │   └── sorter.py
-│   ├── classification/        # Stage 3 (automata)                    [planned]
-│   ├── grammar/               # Stage 4 (textX grammar, .tx)          [planned]
-│   └── visualization/         # HTML/Markdown output                 [planned]
+│   ├── classification/        # Stage 3 (automata)                    [implemented]
+│   │   ├── automata.py
+│   │   └── classifier.py
+│   ├── grammar/               # Stage 4 (textX grammar, .tx)          [implemented]
+│   │   ├── resume_grammar.tx
+│   │   └── parser.py
+│   ├── visualization/         # HTML/Markdown output                  [implemented]
+│   │   └── renderer.py
+│   └── cli.py                 # pipeline orchestration and CLI        [implemented]
+├── data/templates/            # report_template.html (HTML5 report)
+├── main.py                    # command-line entry point
+├── app.py                     # Streamlit web interface               [implemented]
 └── tests/                     # pytest (conftest.py with fixtures)
 ```
 
@@ -80,7 +89,8 @@ Summary by stage:
 
 | Class | Fields | Use |
 |---|---|---|
-| `CandidateInfo` | `name: str`, `email: str`, `phone: str`, `links: List[str]`, `education: List[str]`, `experience: List[str]` | Extracted personal data (Stage 1) |
+| `JobEntry` | `description: str`, `role: str`, `company: str`, `period: str`, `highlights: List[str]` | A job of the *Experience* section with its bullets (Stage 1) |
+| `CandidateInfo` | `name: str`, `email: str`, `phone: str`, `links: List[str]`, `education: List[str]`, `experience: List[str]`, `location: str`, `current_role: str`, `summary: List[str]`, `jobs: List[JobEntry]` | Extracted personal data (Stage 1). `location`, `current_role`, `summary` (paragraphs) and `jobs` are shown in the report and never take part in a verdict |
 | `RawResumeData` | `raw_text: str`, `candidate_info: CandidateInfo`, `raw_skills: List[str]`, `detected_skills: Dict[str, List[str]]` | Output of Stage 1 |
 | `SkillRecord` | `raw_name: str`, `canonical_name: str`, `category: str` | Output of Stage 2 |
 | `EvaluationResult` | `profile_name: str`, `is_accepted: bool`, `matched_sequence: List[str]`, `details: str` | Output of Stage 3 |
@@ -129,7 +139,10 @@ Patterns compiled with `re.compile` in `patterns.py` (registry `PATTERNS`, skill
 | `extract_contact(text)` | `str` | `Dict[str, object]` with `email`, `phone`, `links`, `linkedin`, `github` | `EMAIL_`, `PHONE_`, `URL_`, `LINKEDIN_URL_`, `GITHUB_URL_PATTERN` |
 | `extract_education(text)` | `str` | `List[str]`: lines of *Education* with a degree, institution or period | `DEGREE_`, `INSTITUTION_`, `DATE_RANGE_PATTERN` |
 | `extract_experience(text)` | `str` | `List[str]`: years of experience and job entries | `YEARS_EXPERIENCE_`, `EXPERIENCE_ENTRY_PATTERN` |
-| `extract_skills(text)` | `str` | `List[str]`: raw strings of *Technical Skills*, in order and not normalized | `SKILL_SEPARATOR_PATTERN` |
+| `extract_location(text)`, `extract_current_role(text)` | `str` | `str`: the value of the `Location:` / `Current role:` line (empty if none; *Contact* first) | `LOCATION_`, `CURRENT_ROLE_PATTERN` |
+| `extract_summary(text)` | `str` | `List[str]`: paragraphs of the *Summary* section | blank-line split |
+| `extract_jobs(text)` | `str` | `List[JobEntry]`: each job of *Experience* with its role, company, period and bullets | `EXPERIENCE_ENTRY_`, `HIGHLIGHT_PATTERN` |
+| `extract_skills(text)` | `str` | `List[str]`: raw strings of *Technical Skills* (also `Skills`, `Technologies`, `Tech Stack`; the list may start on the title line, and `-`, `*`, `+` markers are dropped), in order and not normalized | `SKILL_SEPARATOR_PATTERN`, `SKILL_BULLET_PATTERN` |
 | `extract_technologies(text)` | `str` | `Dict[str, List[str]]`: type → detected spellings, without repetitions | `SKILL_PATTERNS` (whole resume except *Contact* and URLs) |
 | `extract_resume(text)` | `str` | `RawResumeData` | Orchestrates the previous ones; `raw_text` keeps the original |
 
@@ -175,6 +188,7 @@ as in class. The normalization of a token is the composition of two transducers:
 |---|---|---|---|
 | `resolve_profile(profile)` | `str` | `str` (`FULL_STACK_DEVELOPER`, …) | Accepts `"Full Stack Developer"`; `UnknownProfileError` if it does not exist |
 | `profile_slots(profile)` | `str` | `Tuple[str, ...]` | Slots (categories) of the profile, in order (`PROFILE_SLOTS`) |
+| `belongs_to_profile(record, profile)` | `SkillRecord`, `str` | `bool` | Whether the record goes to the profile part (a slot of the profile, restricted by `SLOT_RESTRICTIONS`) |
 | `sort_records_by_profile(records, profile)` | `List[SkillRecord]`, `str` | `List[SkillRecord]` | Canonical permutation of the records |
 | `sort_by_profile(records, profile)` | `List[SkillRecord]`, `str` | `List[str]` | Canonical names in canonical order |
 
@@ -189,9 +203,11 @@ Slots by profile (`PROFILE_SLOTS`):
 
 Ordering rule (total; it depends only on the *set* of skills):
 
-1. **Profile part:** the skills whose category is a slot of the profile, slot by slot; inside a
-   slot, in lexicographic order of the canonical name.
-2. **Rest:** the skills of other categories (noise for that profile), in lexicographic order of
+1. **Profile part:** the skills whose category is a slot of the profile (and that the slot
+   admits, see `SLOT_RESTRICTIONS` below), slot by slot; inside a slot, in lexicographic order
+   of the canonical name.
+2. **Rest:** the skills of other categories, and the languages that the `language` slot of the
+   profile does not admit (noise for that profile), in lexicographic order of
    `(category, canonical name)`.
 
 Examples from the assignment:
@@ -209,38 +225,100 @@ profile part. The diagram of the assignment reads one symbol per slot
 skills per mandatory slot, allow optional slots to be missing and tolerate trailing noise.
 Otherwise the reference ML resume would be rejected.
 
-### 5.4 Stage 3 — `resumelens/classification/` [planned]
+The profile part must also contain **only** skills that the automaton reads in a stage. A slot
+may therefore be restricted (`SLOT_RESTRICTIONS` in `sorter.py`): the `language` slot of ML,
+DevOps and Data Engineer admits only the languages of the stage, and any other language
+(`JAVA` for ML, `RUST` for all three) is noise placed after the profile part.
+`belongs_to_profile(record, profile)` tells which part a record goes to, and `classifier.py`
+checks at import time that the sorter and the automata agree for the four profiles.
 
-Each automaton is defined as M = (Q, Σ, δ, q₀, F) with `pyformlang.finite_automaton`
-(`DeterministicFiniteAutomaton`, `NondeterministicFiniteAutomaton` or `EpsilonNFA`).
+### 5.4 Stage 3 — `resumelens/classification/` [implemented]
 
-| Function | Input | Output | Description |
+Each automaton is a deterministic finite automaton M = (Q, Σ, δ, q₀, F) built with
+`pyformlang.finite_automaton.DeterministicFiniteAutomaton`. Σ is the set of canonical names of
+Stage 2 (`KNOWN_SKILLS`). A profile is a sequence of **stages** (`Stage(name, tokens, required)`):
+the candidate satisfies the profile when its canonical sequence has at least one skill of every
+required stage, in order, followed by any known skill that is not part of the profile (noise).
+The four profiles are built by the same function, `build_automaton(ProfileSpec)`.
+
+**`automata.py`**
+
+| Function / constant | Input | Output | Description |
 |---|---|---|---|
-| `build_profile_automaton(profile)` | `str` | automaton | Automaton of the profile (4 supported profiles) |
-| `evaluate_profile(sequence, profile)` | `List[str]`, `str` | `EvaluationResult` | Uses `automaton.accepts(sequence)` |
-| `classify_resume(sequence)` | `List[str]` | `List[EvaluationResult]` | Evaluates the 4 profiles |
+| `Stage`, `ProfileSpec` | name, tokens, `required` / name, stages | frozen dataclasses | Declarative description of a profile; `ProfileSpec.alphabet` lists its skills |
+| `FULL_STACK_PROFILE`, `ML_PROFILE`, `DEVOPS_PROFILE`, `DATA_PROFILE`, `ALL_PROFILES` | — | `ProfileSpec` / tuple | The two official profiles and the two defined by the team |
+| `KNOWN_SKILLS`, `DATABASE_TOKENS`, `CLOUD_TOKENS` | — | `FrozenSet[str]` / tuples | Alphabet of the automata, derived from the transducer tables |
+| `build_automaton(profile)` | `ProfileSpec` | `DeterministicFiniteAutomaton` | DFA with `len(stages) + 2` states (`q0 … qn` and `q_noise`); `ValueError` if the profile is not valid (no stages, no required stage, empty stage, a name in two stages) |
+| `build_<profile>_automaton()` / `get_<profile>_automaton()` | — | DFA | Builds / returns the cached DFA (`full_stack`, `ml`, `devops`, `data`) |
+| `accepts(automaton, tokens)` | DFA, `Iterable[str]` | `bool` | `automaton.accepts(list(tokens))`; the empty sequence is never accepted |
+| `accepts_<profile>(tokens)` | `Iterable[str]` | `bool` | The same with the cached automaton of each profile |
+
+**`classifier.py`**
+
+| Function | Input | Output | Errors |
+|---|---|---|---|
+| `classify_sequence(sequence, profile)` | `Iterable[str]` (canonical names in profile order), `str` | `EvaluationResult` | `UnknownProfileError`; `TypeError` if the sequence is a single string or has a non-string item |
+| `classify_records(records, profile)` | `Sequence[SkillRecord]`, `str` | `EvaluationResult` | `UnknownProfileError` |
+| `classify_all(records)` | `Sequence[SkillRecord]` | `ClassificationReport` (one result per profile, in the order of `PROFILES`) | — |
+| `ClassificationReport` | — | `results`, `accepted_profiles`, `rejected_profiles`, `result_for(profile)`, `verdicts()` | `KeyError` / `UnknownProfileError` in `result_for` |
+| `profile_spec(profile)`, `verdict_of(result)` | `str` / `EvaluationResult` | `ProfileSpec` / `"ACCEPTED"` or `"REJECTED"` | `UnknownProfileError` |
+
+The verdict is always the one of `pyformlang`'s `accepts`. `EvaluationResult.details` starts with
+`ACCEPTED - <profile>` or `REJECTED - <profile>` and then gives the sequence read and the stages
+satisfied, or the `Reason:` of the rejection (computed by replaying the sequence over the stages
+with the same rule as the DFA, only to explain). `matched_sequence` holds the skills of the
+sequence that belong to a stage of the profile. When `classifier.py` is imported it checks that
+the sorter and the automata agree on which skills belong to each profile (Section 5.3).
 
 Profiles: `FULL_STACK_DEVELOPER`, `MACHINE_LEARNING_ENGINEER`, `DEVOPS_ENGINEER`, `DATA_ENGINEER`.
 A resume may be accepted by 0, 1 or several profiles.
 
-### 5.5 Stage 4 — `resumelens/grammar/` and `resumelens/visualization/` [planned]
+### 5.5 Stage 4 — `resumelens/grammar/` and `resumelens/visualization/` [implemented]
+
+The grammar `resume_grammar.tx` (textX, context-free) describes one `CandidateReport`: personal
+data (with an optional location and current role), an optional profile summary, education and
+experience entries (zero or more; an experience entry may also give its role, company, period and
+highlights), skills (one or more) and the verdict of each of the four profiles, always in that
+order. It is documented in EBNF in
+`docs/formalization.md`, Section 4.
+
+**`grammar/parser.py`**
 
 | Function | Input | Output | Errors |
 |---|---|---|---|
-| `build_profile_source(info, records, results)` | `CandidateInfo`, `List[SkillRecord]`, `List[EvaluationResult]` | `str` in the DSL | — |
-| `load_metamodel()` | — | metamodel (`metamodel_from_file`) | — |
-| `parse_candidate_profile(source)` | `str` | validated textX model | `TextXSyntaxError` on violations |
-| `render_html(model)` / `render_markdown(model)` | validated model | `str` | — |
-| `write_visualization(content, path)` | `str`, `Path` | `Path` | `OSError` |
+| `build_profile_source(info, records, results)` | `CandidateInfo`, `Sequence[SkillRecord]`, `Sequence[EvaluationResult]` | `str` in the DSL (not validated) | — |
+| `load_metamodel()` | — | metamodel (`metamodel_from_file`, cached) | — |
+| `parse_candidate_profile(source)` | `str` | validated textX model | `TextXSyntaxError` on a lexical or syntactic violation; `TypeError` if `source` is not a `str` |
+| `is_valid_profile_source(source)` | `str` | `bool` | — |
 
-The grammar (`.tx`) is documented in EBNF with explicit terminals and non-terminals, and it
-supports repeated elements (several experiences, studies and skills).
+**`visualization/renderer.py`**
 
-### 5.6 Orchestration [planned]
+| Function | Input | Output | Errors |
+|---|---|---|---|
+| `render_html(model)` | validated model | `str`: self-contained HTML5 page built from `data/templates/report_template.html`, with the sections of the example page of the assignment (personal information, profile summary, education, experience with role, company, period and bullets, normalized skills and qualification evaluation); every value is escaped | `OSError` if the template cannot be read |
+| `render_markdown_report(model)` | validated model | `str`: Markdown report with the same sections, escaped | — |
+| `write_visualization(content, path)` | `str`, `Path` | `Path` written (creates missing folders) | `OSError` |
 
-| Function | Input | Output |
-|---|---|---|
-| `run_pipeline(file_path)` | `str \| Path` | `PipelineReport` (candidate, normalized skills, results per profile, DSL, visualization path) |
+### 5.6 Orchestration and interfaces [implemented]
+
+**`resumelens/cli.py`** runs the four stages and is the command-line interface
+(`python main.py --cv FILE [--profile NAME] [--output FILE.html|.md]`).
+
+| Function | Input | Output | Errors |
+|---|---|---|---|
+| `run_pipeline(cv_path)` | `str \| Path` | `PipelineRun` (`resume`, `normalization`, `sequences`, `report`, `source`, `model`, `dsl_error`) | `FileNotFoundError`, `OSError`, `UnicodeDecodeError` |
+| `run_pipeline_text(text, source)` | `str`, `Path` (label) | `PipelineRun` | — |
+| `write_report(model, output)` | validated model, `Path` | `Path` written; format chosen by the extension (`.html`, `.htm`, `.md`, `.markdown`) | `ValueError` (extension), `OSError` |
+| `format_console_report(run, profile, output, write_error)` | `PipelineRun`, … | `str` with the four stages and the final verdict | `UnknownProfileError` |
+| `build_parser()` / `main(argv)` | — / `Sequence[str]` | `ArgumentParser` / exit status | exit `1` if the file cannot be read or the DSL document is invalid; `2` for invalid arguments |
+
+A resume whose DSL document is not valid (for instance, without recognized skills) does not
+raise: the run keeps the results of Stages 1 to 3 and reports the problem in `dsl_error`.
+
+**`app.py`** is the web interface (Streamlit). It contains no pipeline logic: it calls
+`run_pipeline_text` and the renderers and shows the result of each stage in a tab (extraction,
+normalization, classification, DSL and report), with the HTML and Markdown reports available for
+download. It is started with `streamlit run app.py`.
 
 ## 6. Formalization (reference)
 
@@ -249,8 +327,8 @@ supports repeated elements (several experiences, studies and skills).
 - **Stage 3:** M = (Q, Σ, δ, q₀, F), stating whether it is a DFA, NFA or ε‑NFA, with a transition diagram.
 - **Stage 4:** G = (V, Σ, S, P) in EBNF.
 
-The details are delivered in `docs/formalization.md`, one section per stage (Section 1,
-regular expressions, is already written).
+The details are in `docs/formalization.md`, one section per stage (Section 1, regular
+expressions; Section 2, transducers; Section 3, profile automata; Section 4, grammar).
 
 ## 7. Test design
 
@@ -275,6 +353,11 @@ regular expressions, is already written).
 | Valid Data | `resume_data` | Data Engineer accepted |
 | Invalid resume | `resume_invalid` | No skills section; no profile accepted; the DSL rejects incomplete representations |
 | Writing order | any | The sorted sequence does not depend on the original order |
+| Report details | the four valid resumes | Location, current role, a two-paragraph summary and a job with bullets appear in the DSL document and in both reports; they never change a verdict |
+| Layout of the skills section | text | `Technical Skills:` on its own line, with the list on the same line, without colon, with `-` / bullet markers or separated by `\|` gives the same raw skills |
+| Language outside the profile | `Java, Python, Pandas, …` | Machine Learning is still accepted: `Java` is noise for that profile |
+| Invalid DSL document | resume without recognized skills | `TextXSyntaxError`; no report is generated |
+| End to end | the five resumes | File → stages 1–4 → HTML / Markdown report (CLI) and the same result in the web interface |
 | Missing file | — | `FileNotFoundError` |
 
 ### 7.3 Current tests
@@ -285,8 +368,16 @@ regular expressions, is already written).
 | `tests/test_patterns.py` | Each pattern of `patterns.py` with strings in and out of its language, over the resumes and the invalid resume |
 | `tests/test_extraction.py` | Extractor functions, token isolation, `extract_technologies` and full extraction of the resumes |
 | `tests/test_normalization.py` | 7-tuple of T_case and of the 7 families, translations, rejections, categories, duplicates and the pipeline with Stage 1 |
+| `tests/test_sorter.py` | Canonical order of the four profiles, independence from the input order, remaining part and languages outside a profile |
+| `tests/test_classification.py` | Automata of the four profiles (structure, acceptance and rejection paths), classifier reports and the full path from the resumes |
+| `tests/test_grammar_definition.py`, `tests/test_grammar.py` | The textX grammar, the serializer, the parser and the rejection of malformed documents |
+| `tests/test_visualization.py` | HTML and Markdown reports, escaping and file writing |
+| `tests/test_cli.py`, `tests/test_e2e_pipeline.py` | Arguments, console report, exit statuses and the whole pipeline from file to report |
+| `tests/test_app.py` | The web interface, run without a browser with Streamlit's `AppTest` |
+| `tests/test_environment.py` | The packages of the project can be imported |
 
 ## 8. Constraints
 
-Only `re`, `pyformlang` and `textX` are used. No NLP/ML libraries, other parser generators,
-graph libraries, databases or web services are used.
+Only `re`, `pyformlang` and `textX` are used by the pipeline, plus `streamlit` for the web
+interface (`app.py`), which only displays the results of the pipeline. No NLP/ML libraries,
+other parser generators, graph libraries, databases or external web services are used.

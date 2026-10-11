@@ -76,7 +76,7 @@ VALID = list(EXPECTED)
 # Pattern registry
 # ---------------------------------------------------------------------------
 def test_all_patterns_are_compiled():
-    assert len(p.PATTERNS) == 22
+    assert len(p.PATTERNS) == 25
     assert all(isinstance(pat, re.Pattern) for pat in p.PATTERNS.values())
 
 
@@ -179,6 +179,36 @@ def test_section_header_ignores_inline_colons():
     assert p.SECTION_HEADER_PATTERN.search("skills:\nPython")["title"] == "skills"
 
 
+@pytest.mark.parametrize(
+    "line, title",
+    [
+        ("Technical Skills", "Technical Skills"),
+        ("Technical Skills:", "Technical Skills"),
+        ("Skills: Python, Git", "Skills"),
+        ("  technologies :  Python", "technologies"),
+        ("Tech   Stack: Python", "Tech   Stack"),
+        ("Professional Experience", "Professional Experience"),
+        ("Contact Information:", "Contact Information"),
+    ],
+)
+def test_section_header_accepts_inline_content_and_colonless_titles(line, title):
+    assert p.SECTION_HEADER_PATTERN.search(line)["title"] == title
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Skills are important",
+        "My technical skills",
+        "Experience with Python",
+        "Education level: high",
+        "Technologies used at work",
+    ],
+)
+def test_section_header_rejects_titles_inside_a_sentence(line):
+    assert p.SECTION_HEADER_PATTERN.search(line) is None
+
+
 # ---------------------------------------------------------------------------
 # Education
 # ---------------------------------------------------------------------------
@@ -257,7 +287,10 @@ def test_education_on_fixtures(resume_texts, alias):
     assert d["degree"] == f"{exp['level']} in {exp['field']}"
     # The simple patterns agree with the full record.
     assert p.DEGREE_PATTERN.search(resume_texts[alias])["degree"] == d["degree"]
-    assert p.INSTITUTION_PATTERN.search(resume_texts[alias])["institution"] == exp["institution"]
+    # The institution is searched in the education record: the location line of a resume may also
+    # contain an institution word (``Nevermore Academy, Jericho``).
+    assert p.INSTITUTION_PATTERN.search(d["institution"])["institution"] == exp["institution"]
+    assert p.INSTITUTION_PATTERN.search(resume_texts[alias].split("Education:")[1])["institution"] == exp["institution"]
 
 # ---------------------------------------------------------------------------
 # Technical skills
@@ -537,4 +570,78 @@ def test_name_pattern_rejects(line):
 
 def test_skill_separator_splits_on_comma_semicolon_and_newline():
     assert p.SKILL_SEPARATOR_PATTERN.split("a,b;c\nd") == ["a", "b", "c", "d"]
+    assert p.SKILL_SEPARATOR_PATTERN.split("a|b•c·d") == ["a", "b", "c", "d"]
+    assert p.SKILL_SEPARATOR_PATTERN.split("Scikit-learn") == ["Scikit-learn"]
+
+
+@pytest.mark.parametrize("item, rest", [("- Python", "Python"), ("*  Git", "Git"), ("+ SQL", "SQL")])
+def test_skill_bullet_pattern_matches_list_markers(item, rest):
+    assert p.SKILL_BULLET_PATTERN.sub("", item) == rest
+
+
+@pytest.mark.parametrize("item", ["C++", ".NET", "-Python", "Scikit-learn", "Python"])
+def test_skill_bullet_pattern_leaves_tokens_alone(item):
+    assert p.SKILL_BULLET_PATTERN.search(item) is None
     assert "separator" not in p.PATTERNS  # a delimiter, not an extraction pattern
+
+
+# ---------------------------------------------------------------------------
+# Report details: location, current role and bullets of a job entry
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "line, value",
+    [
+        ("Location: Nevermore Academy, Jericho", "Nevermore Academy, Jericho"),
+        ("location:Queens, New York", "Queens, New York"),
+        ("  LOCATION :  Brooklyn  ", "Brooklyn  "),
+    ],
+)
+def test_location_pattern_accepts(line, value):
+    assert p.LOCATION_PATTERN.search(line)["location"] == value
+
+
+@pytest.mark.parametrize("line", ["Relocation: yes", "My location: Bogota", "Locations: a", "Location Bogota"])
+def test_location_pattern_rejects(line):
+    assert p.LOCATION_PATTERN.search(line) is None
+
+
+@pytest.mark.parametrize(
+    "line, value",
+    [
+        ("Current role: DevOps Engineer at Stark Cloud", "DevOps Engineer at Stark Cloud"),
+        ("current   role:Student", "Student"),
+    ],
+)
+def test_current_role_pattern_accepts(line, value):
+    assert p.CURRENT_ROLE_PATTERN.search(line)["role"] == value
+
+
+@pytest.mark.parametrize("line", ["Role: Developer", "Current: yes", "Previous role: QA"])
+def test_current_role_pattern_rejects(line):
+    assert p.CURRENT_ROLE_PATTERN.search(line) is None
+
+
+@pytest.mark.parametrize(
+    "line, text",
+    [
+        ("- Built a React.js dashboard.", "Built a React.js dashboard."),
+        ("  * Used Git", "Used Git"),
+        ("+ Deployed services", "Deployed services"),
+        ("\u2022 Wrote tests", "Wrote tests"),
+    ],
+)
+def test_highlight_pattern_accepts(line, text):
+    assert p.HIGHLIGHT_PATTERN.search(line)["text"] == text
+
+
+@pytest.mark.parametrize("line", ["Built a dashboard", "-Built", "Full Stack Developer, Raven Labs (2023 - 2026)"])
+def test_highlight_pattern_rejects(line):
+    assert p.HIGHLIGHT_PATTERN.search(line) is None
+
+
+@pytest.mark.parametrize("alias", VALID)
+def test_report_details_on_fixtures(resume_texts, alias):
+    text = resume_texts[alias]
+    assert len(p.LOCATION_PATTERN.findall(text)) == 1
+    assert len(p.CURRENT_ROLE_PATTERN.findall(text)) == 1
+    assert len(p.HIGHLIGHT_PATTERN.findall(text)) == 2

@@ -5,7 +5,7 @@ alternative export for when no HTML output is needed (it does not depend on the 
 
 The HTML report follows the structure of the example in the assignment: a self-contained page
 (embedded CSS, no scripts, no external resources) with the sections *Personal Information*,
-*Education*, *Experience*, *Normalized Technical Skills* and *Qualification Evaluation*.
+*Profile Summary*, *Education*, *Experience*, *Normalized Technical Skills* and *Qualification Evaluation*.
 Every value is read from the model returned by ``parse_candidate_profile`` and escaped
 before being inserted into ``data/templates/report_template.html``.
 """
@@ -52,6 +52,10 @@ def _render_personal(personal: Any) -> str:
         rows.append(_field("Email", personal.email))
     if personal.phone:
         rows.append(_field("Phone", personal.phone))
+    if personal.location:
+        rows.append(_field("Location", personal.location))
+    if personal.current_role:
+        rows.append(_field("Current role", personal.current_role))
     for link in personal.links:
         rows.append(
             _line(f'<p><strong>Link:</strong> <a href="{_text(link)}">{_text(link)}</a></p>')
@@ -64,6 +68,39 @@ def _render_entries(entries: Sequence[Any], empty_message: str) -> str:
         return _empty(empty_message)
     items = [_line(f"<li>{_text(entry.description)}</li>", 1) for entry in entries]
     return "\n".join([_line("<ul>"), *items, _line("</ul>")])
+
+
+def _render_summary(summary: Any) -> str:
+    paragraphs = list(summary.paragraphs) if summary is not None else []
+    if not paragraphs:
+        return _empty("No summary provided.")
+    return "\n".join(_line(f"<p>{_text(paragraph.text)}</p>") for paragraph in paragraphs)
+
+
+def _render_jobs(entries: Sequence[Any]) -> str:
+    """Render the experience: a structured entry as a block, plain entries as a list."""
+    if not entries:
+        return _empty("No experience entries.")
+    parts: List[str] = []
+    plain: List[Any] = []
+
+    def flush() -> None:
+        if plain:
+            parts.append(_render_entries(plain, ""))
+            plain.clear()
+
+    for entry in entries:
+        if not entry.role:
+            plain.append(entry)
+            continue
+        flush()
+        parts.append(_line(f"<h3>{_text(entry.role)}</h3>"))
+        parts.append(_line(f'<p class="metadata">{_text(entry.company)} &middot; {_text(entry.period)}</p>'))
+        if entry.highlights:
+            items = [_line(f"<li>{_text(text)}</li>", 1) for text in entry.highlights]
+            parts.append("\n".join([_line("<ul>"), *items, _line("</ul>")]))
+    flush()
+    return "\n".join(parts)
 
 
 def _render_skills(skills: Sequence[Any]) -> str:
@@ -116,12 +153,11 @@ def render_html(model: Any) -> str:
     template = Template(TEMPLATE_PATH.read_text(encoding="utf-8"))
     sections: Dict[str, Callable[[], str]] = {
         "personal": lambda: _render_personal(model.personal),
+        "summary": lambda: _render_summary(model.summary),
         "education": lambda: _render_entries(
             model.education.entries, "No education entries."
         ),
-        "experience": lambda: _render_entries(
-            model.experience.entries, "No experience entries."
-        ),
+        "experience": lambda: _render_jobs(model.experience.entries),
         "skills": lambda: _render_skills(model.skills.skills),
         "evaluation": lambda: _render_evaluation(model.evaluation.results),
     }
@@ -173,6 +209,26 @@ def _md_bullets(items: Sequence[str], empty_message: str) -> List[str]:
     return items if items else [f"_{empty_message}_"]
 
 
+def _md_jobs(entries: Sequence[Any]) -> List[str]:
+    """Return the experience as Markdown lines: a block per structured entry, bullets otherwise."""
+    lines: List[str] = []
+    for entry in entries:
+        if not entry.role:
+            lines.append(f"- {_md_line(entry.description)}")
+            continue
+        if lines:
+            lines.append("")
+        lines += [
+            f"### {_md_line(entry.role)}",
+            "",
+            f"_{_md_line(entry.company)} · {_md_line(entry.period)}_",
+        ]
+        if entry.highlights:
+            lines.append("")
+            lines.extend(f"- {_md_line(text)}" for text in entry.highlights)
+    return lines
+
+
 def render_markdown_report(model: Any) -> str:
     """Render a validated ``CandidateReport`` model as a Markdown report.
 
@@ -193,10 +249,15 @@ def render_markdown_report(model: Any) -> str:
         contact.append(f"- **Email:** {_md_line(personal.email)}")
     if personal.phone:
         contact.append(f"- **Phone:** {_md_line(personal.phone)}")
+    if personal.location:
+        contact.append(f"- **Location:** {_md_line(personal.location)}")
+    if personal.current_role:
+        contact.append(f"- **Current role:** {_md_line(personal.current_role)}")
     contact.extend(f"- **Link:** {_md_link(link)}" for link in (personal.links or []))
 
     education = [f"- {_md_line(e.description)}" for e in (model.education.entries or [])]
-    experience = [f"- {_md_line(e.description)}" for e in (model.experience.entries or [])]
+    summary = [_md_line(p.text) for p in (model.summary.paragraphs if model.summary else [])]
+    experience = _md_jobs(model.experience.entries or [])
 
     skills = list(model.skills.skills or [])
     skill_lines = (
@@ -232,6 +293,7 @@ def render_markdown_report(model: Any) -> str:
         "_Candidate profile generated by ResumeLens_",
         "## Personal Information\n\n"
         + "\n".join(_md_bullets(contact, "No contact data provided.")),
+        "## Profile Summary\n\n" + "\n\n".join(summary or ["_No summary provided._"]),
         "## Education\n\n" + "\n".join(_md_bullets(education, "No education entries.")),
         "## Experience\n\n" + "\n".join(_md_bullets(experience, "No experience entries.")),
         "## Normalized Technical Skills\n\n" + "\n".join(skill_lines),

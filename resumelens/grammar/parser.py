@@ -12,7 +12,7 @@ The DSL is defined by the textX grammar ``resume_grammar.tx``. This module:
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, List, Sequence
 
 from textx import metamodel_from_file
 from textx.exceptions import TextXSyntaxError
@@ -44,6 +44,26 @@ def _block(title: str, lines: Sequence[str]) -> str:
     return f"{_INDENT}{title} {{\n{body}{_INDENT}}}\n"
 
 
+def _job_lines(info: CandidateInfo) -> List[str]:
+    """Return the lines of the ``experience`` block: one ``job`` per entry of ``info.experience``.
+
+    An entry that has a structured ``JobEntry`` in ``info.jobs`` (same text) also gets its role,
+    company, period and highlights.
+    """
+    structured = {job.description: job for job in info.jobs}
+    lines: List[str] = []
+    for item in info.experience:
+        lines.append(f"job {_quote(item)}")
+        job = structured.get(item)
+        if job is None:
+            continue
+        lines.append(
+            f"{_INDENT}role {_quote(job.role)} company {_quote(job.company)} period {_quote(job.period)}"
+        )
+        lines.extend(f"{_INDENT}highlight {_quote(text)}" for text in job.highlights)
+    return lines
+
+
 def build_profile_source(
     info: CandidateInfo,
     records: Sequence[SkillRecord],
@@ -57,7 +77,7 @@ def build_profile_source(
     ``parse_candidate_profile``.
 
     Args:
-        info: Contact, education and experience data (Stage 1).
+        info: Contact, summary, education and experience data (Stage 1).
         records: Normalized skills (Stage 2).
         results: One evaluation per profile (Stage 3), in roadmap order.
 
@@ -69,6 +89,10 @@ def build_profile_source(
         personal.append(f"email: {info.email}")
     if info.phone:
         personal.append(f"phone: {info.phone}")
+    if info.location:
+        personal.append(f"location: {_quote(info.location)}")
+    if info.current_role:
+        personal.append(f"current_role: {_quote(info.current_role)}")
     personal.extend(f"link: {link}" for link in info.links)
 
     evaluation = []
@@ -78,10 +102,12 @@ def build_profile_source(
         evaluation.append(f"{_INDENT}matched [{', '.join(result.matched_sequence)}]")
         evaluation.append(f"{_INDENT}details {_quote(result.details)}")
 
-    blocks = [
-        _block("personal", personal),
+    blocks = [_block("personal", personal)]
+    if info.summary:
+        blocks.append(_block("summary", [f"paragraph {_quote(text)}" for text in info.summary]))
+    blocks += [
         _block("education", [f"study {_quote(item)}" for item in info.education]),
-        _block("experience", [f"job {_quote(item)}" for item in info.experience]),
+        _block("experience", _job_lines(info)),
         _block(
             "skills",
             [

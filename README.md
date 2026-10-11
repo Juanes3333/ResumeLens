@@ -5,6 +5,8 @@ Professor: Andrés Aristizábal.
 
 **Members:** Juan Restrepo, Samuel Granda, Daniel Varela.
 
+**IDE:** Visual Studio Code (used by all members).
+
 ResumeLens reads a plain-text résumé and decides, for four professional profiles, whether the
 qualifications that appear **explicitly** in the text satisfy a formally defined qualification
 pattern. It does **not** rank candidates and it does not make hiring decisions.
@@ -63,7 +65,8 @@ profiles defined by this team. The exact definitions, with the 5-tuple of every 
 ```
 ResumeLens/
 ├── main.py                       # entry point of the command line
-├── requirements.txt
+├── app.py                        # web interface (Streamlit)
+├── requirements.txt              # pinned dependencies
 ├── data/
 │   ├── input_resumes/            # synthetic résumés (4 profiles + 1 invalid)
 │   └── templates/report_template.html
@@ -82,20 +85,22 @@ ResumeLens/
 | Module | Main public functions |
 |---|---|
 | `core.reader` | `read_resume_file(path)` |
-| `core.models` | `CandidateInfo`, `RawResumeData`, `SkillRecord`, `EvaluationResult` |
-| `extraction` | `extract_resume(text)`, `extract_contact`, `extract_education`, `extract_experience`, `extract_skills`; compiled patterns in `patterns.PATTERNS` |
+| `core.models` | `CandidateInfo`, `JobEntry`, `RawResumeData`, `SkillRecord`, `EvaluationResult` |
+| `extraction` | `extract_resume(text)`, `extract_contact`, `extract_education`, `extract_experience`, `extract_skills`, `extract_location`, `extract_current_role`, `extract_summary`, `extract_jobs`; compiled patterns in `patterns.PATTERNS` |
 | `normalization` | `normalize_with_report(raw_skills)`, `sort_by_profile(records, profile)`; transducers built with `build_transducer` |
 | `classification` | `classify_all(records)`, `classify_records`, `accepts`, `build_automaton` |
 | `grammar` | `build_profile_source(...)`, `parse_candidate_profile(source)`, `is_valid_profile_source`, `load_metamodel` |
 | `visualization` | `render_html(model)`, `render_markdown_report(model)`, `write_visualization(content, path)` |
-| `cli` | `run_pipeline(cv_path)`, `main(argv)` |
+| `cli` | `run_pipeline(cv_path)`, `run_pipeline_text(text)`, `main(argv)` |
+| `app.py` | Streamlit page: it calls `run_pipeline_text` and the renderers and shows each stage |
 
 The input and output contracts of every function are described in
 [`docs/module_design.md`](docs/module_design.md).
 
 ## Installation
 
-Requires Python 3 (the project was run and tested with Python 3.12).
+Requires Python 3.10 or newer (`streamlit` 1.65 and `pytest` 9.1 need it). The test suite was run
+with Python 3.14.
 
 ```bash
 python -m venv .venv
@@ -104,9 +109,10 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Dependencies (`requirements.txt`): `pyformlang`, `textx`, `pytest`, `pydot`. No other library is
-used: there are no NLP/machine-learning packages, no other parser generators, no graph libraries,
-no databases and no network calls.
+Dependencies (`requirements.txt`, with pinned versions): `pyformlang`, `textx`, `pytest`, `pydot`
+and `streamlit` (only for the web interface in `app.py`). The pipeline itself uses `re`,
+`pyformlang` and `textx`. There are no NLP/machine-learning packages, no other parser generators,
+no graph libraries, no databases and no network calls.
 
 ## Usage (command line)
 
@@ -148,12 +154,12 @@ Console output of the second kind of run (shortened):
   Machine Learning Engineer  ACCEPTED  matched: PYTHON, NUMPY, PANDAS, ...
 
 [Stage 4] Candidate language (textX) and report
-  DSL document : valid (49 lines)
+  DSL document : valid (58 lines)
   Report       : written to reports/ml.html
 
 Final verdict
   ACCEPTED : Machine Learning Engineer
-  REJECTED : (none)
+  REJECTED : Full Stack Developer, DevOps Engineer, Data Engineer
 ```
 
 **Exit status:** `0` when the four stages finish and the requested report is written; `1` when the
@@ -161,17 +167,42 @@ résumé cannot be read, when the candidate document is not valid for the gramma
 résumé without recognized skills, such as `resume_invalid.txt`) or when the report cannot be
 written; `2` for invalid command-line arguments.
 
+## Usage (web interface)
+
+```bash
+streamlit run app.py
+```
+
+The page opens in the browser (by default at `http://localhost:8501`). In the sidebar, choose one
+of the example résumés, upload a plain-text file or paste a text, and choose the profile whose
+automaton is detailed. The page runs the same pipeline as the command line and shows, in one tab
+per stage: the data extracted with regular expressions, the translation of every skill by the
+transducers and the canonical order, the verdict of each profile with the report of its automaton
+(and the transition function of the selected one), and the candidate document in the DSL with the
+HTML and Markdown reports, which can be downloaded. A résumé whose document violates the grammar
+shows the syntax error and no report.
+
+To publish it with Streamlit Community Cloud, push the repository to GitHub, create an app from
+the repository, the branch `main` and the main file `app.py`; the service installs the pinned
+packages of `requirements.txt` and redeploys on every push.
+
 ## Candidate profile language (Stage 4)
 
 The result of the previous stages is written in a small language defined by a context-free grammar
 in [`resumelens/grammar/resume_grammar.tx`](resumelens/grammar/resume_grammar.tx). A document has
-five blocks, always in this order, and always the four profile verdicts:
+five mandatory blocks, always in this order (the personal information, education, experience,
+skills and the evaluation), an optional profile summary right after the personal information, and
+always the four profile verdicts:
 
 ```
 candidate {
-    personal   { name: "WEDNESDAY ADDAMS"  email: ...  phone: ...  link: https://... }
+    personal   { name: "WEDNESDAY ADDAMS"  email: ...  phone: ...
+                 location: "Nevermore Academy, Jericho"  current_role: "..."  link: https://... }
+    summary    { paragraph "3 years of experience developing web applications."  ... }
     education  { study "B.S. in Computer Science" }
-    experience { job "Full Stack Developer, Raven Labs (2023 - 2026)" }
+    experience { job "Full Stack Developer, Raven Labs (2023 - 2026)"
+                     role "Full Stack Developer" company "Raven Labs" period "2023 - 2026"
+                     highlight "Built a React.js dashboard ..." }
     skills     { skill JAVASCRIPT category web_language raw "JS"  ... }
     evaluation {
         profile FULL_STACK_DEVELOPER: ACCEPTED
@@ -181,6 +212,10 @@ candidate {
     }
 }
 ```
+
+The location, current role, summary and the structure of the jobs are shown in the report (they
+are the sections of the example page of the assignment), but they never take part in a verdict:
+the verdicts only depend on the normalized skills.
 
 A document that breaks a lexical or syntactic rule is rejected with `TextXSyntaxError`, and no
 report is generated. The EBNF specification, the terminals and non-terminals and the derivations
@@ -192,7 +227,8 @@ are in section 4 of [`docs/formalization.md`](docs/formalization.md).
 pytest
 ```
 
-The suite has about 1,700 tests and covers every stage and the complete pipeline:
+The suite has about 1,800 tests and covers every stage, the command line, the web interface and
+the complete pipeline:
 
 | File | Covers |
 |---|---|
@@ -203,6 +239,7 @@ The suite has about 1,700 tests and covers every stage and the complete pipeline
 | `tests/test_grammar_definition.py`, `tests/test_grammar.py` | Stage 4: grammar, parser and serializer |
 | `tests/test_visualization.py` | HTML and Markdown reports |
 | `tests/test_cli.py`, `tests/test_e2e_pipeline.py` | command line and end-to-end runs from file to report |
+| `tests/test_app.py` | web interface, run without a browser with Streamlit's `AppTest` |
 | `tests/test_environment.py` | environment and dependencies |
 
 The shared fixtures (the synthetic résumés loaded in memory) are in `tests/conftest.py`.
@@ -219,7 +256,9 @@ The shared fixtures (the synthetic résumés loaded in memory) are in `tests/con
 ## Known limitations
 
 - The input is plain UTF-8 text. PDF or Word files are not read.
-- The skills are taken from the *Technical Skills* section. A token that joins several skills,
+- The skills are taken from the *Technical Skills* section (also `Skills`, `Technologies` or
+  `Tech Stack`; the list may start on the same line as the title and may use commas, semicolons,
+  `|`, bullet dots or one item per line with `-`, `*` or `+`). A token that joins several skills,
   such as `Python and Git`, is not split: the normalizer reports it as unrecognized.
 - Education and institution patterns recognize English wording (`B.S. in ...`, `University`,
   `Institute`, ...).

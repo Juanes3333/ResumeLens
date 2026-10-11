@@ -90,11 +90,14 @@ GITHUB_URL_PATTERN: Pattern[str] = re.compile(
 # 2. STRUCTURE
 # ---------------------------------------------------------------------------
 
-#: Section header: a line holding a keyword followed by ``:``.
-#: E.g.: ``Contact:``, ``Technical Skills:``, ``Education:``, ``Experience:``.
+#: Section header: a line that starts with a section keyword, which is followed either by
+#: a colon (``Technical Skills:``, with the content of the section on the same line or on
+#: the next ones) or by the end of the line (``Technical Skills``).
+#: E.g.: ``Contact:``, ``Technical Skills:``, ``Skills: Python, Git``, ``Education``.
 SECTION_HEADER_PATTERN: Pattern[str] = re.compile(
-    r"^[ \t]*(?P<title>Contact|Summary|Technical Skills|Skills|Education|"
-    r"Experience|Work Experience|Projects|Certifications)[ \t]*:[ \t]*$",
+    r"^[ \t]*(?P<title>Contact[ \t]+Information|Contact|Summary|Technical[ \t]+Skills|Skills|"
+    r"Technologies|Tech[ \t]+Stack|Education|Professional[ \t]+Experience|Work[ \t]+Experience|"
+    r"Experience|Projects|Certifications)[ \t]*(?::[ \t]*|$)",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -263,9 +266,40 @@ NAME_PATTERN: Pattern[str] = re.compile(
     r"(?:[ \t]+[A-ZÁÉÍÓÚÑÜ](?:[^\W\d_]|['’.-])*){1,3})$"
 )
 
-#: Separator of the items of a skill list: comma, semicolon or line break. It is a
-#: delimiter, not an extraction pattern, so it is not part of :data:`PATTERNS`.
-SKILL_SEPARATOR_PATTERN: Pattern[str] = re.compile(r"[,;\n]")
+#: Separator of the items of a skill list: comma, semicolon, vertical bar, bullet dot
+#: (U+2022, U+00B7) or line break. It is a delimiter, not an extraction pattern, so it is
+#: not part of :data:`PATTERNS`. The hyphen is not a separator (``Scikit-learn``).
+SKILL_SEPARATOR_PATTERN: Pattern[str] = re.compile(r"[,;|•·\n]")
+
+#: List marker at the start of an item: ``-``, ``*`` or ``+`` followed by spaces
+#: (``- Python``). The spaces are required, so ``C++`` and ``.NET`` do not start with a marker.
+SKILL_BULLET_PATTERN: Pattern[str] = re.compile(r"^[-*+][ \t]+")
+
+# ---------------------------------------------------------------------------
+# 7. REPORT DETAILS (shown in the report; they do not take part in the verdict)
+# ---------------------------------------------------------------------------
+
+#: Location line: ``Location:`` followed by the place, as written. The value is trimmed by
+#: the extractor. E.g.: ``Location: Nevermore Academy, Jericho``.
+LOCATION_PATTERN: Pattern[str] = re.compile(
+    r"^[ \t]*Location[ \t]*:[ \t]*(?P<location>[^\n]*)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+#: Current-role line: ``Current role:`` followed by the role, as written.
+#: E.g.: ``Current role: Student and independent investigator``.
+CURRENT_ROLE_PATTERN: Pattern[str] = re.compile(
+    r"^[ \t]*Current[ \t]+role[ \t]*:[ \t]*(?P<role>[^\n]*)$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+#: Bullet of a job entry: a list marker (``-``, ``*``, ``+`` or a bullet dot), spaces and the
+#: text of the achievement. E.g.: ``- Built a React.js dashboard.``
+HIGHLIGHT_PATTERN: Pattern[str] = re.compile(
+    r"^[ \t]*[-*+•·][ \t]+(?P<text>[^\n]*)$",
+    re.MULTILINE,
+)
+
 #: Technical-skill patterns by type, in the order the extractor reports them.
 SKILL_PATTERNS: Dict[str, Pattern[str]] = {
     "programming_language": PROGRAMMING_LANGUAGE_PATTERN,
@@ -303,4 +337,7 @@ PATTERNS: Dict[str, Pattern[str]] = {
     "api": API_PATTERN,
     "ml_practice": ML_PRACTICE_PATTERN,
     "name": NAME_PATTERN,
+    "location": LOCATION_PATTERN,
+    "current_role": CURRENT_ROLE_PATTERN,
+    "highlight": HIGHLIGHT_PATTERN,
 }

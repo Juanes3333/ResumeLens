@@ -35,7 +35,9 @@ from resumelens.normalization.sorter import (
     MACHINE_LEARNING_ENGINEER,
     PROFILE_SLOTS,
     PROFILES,
+    SLOT_RESTRICTIONS,
     UnknownProfileError,
+    belongs_to_profile,
     profile_slots,
     resolve_profile,
     sort_by_profile,
@@ -629,3 +631,35 @@ class TestSyntheticResumes:
         raw_skills = extract_resume(resume_texts["ml"]).raw_skills
         order = sorted_names(raw_skills, MACHINE_LEARNING_ENGINEER)
         assert order[1:3] == ["NUMPY", "PANDAS"]
+
+
+# ---------------------------------------------------------------------------
+# Languages outside the language stage of a profile are noise for that profile
+# ---------------------------------------------------------------------------
+class TestLanguageSlotRestrictions:
+    @pytest.mark.parametrize(
+        "profile, raw, expected",
+        [
+            (MACHINE_LEARNING_ENGINEER, ["Java", "Python", "Git"], ["PYTHON", "GIT", "JAVA"]),
+            (MACHINE_LEARNING_ENGINEER, ["C++", "Rust", "Python"], ["PYTHON", "C_PLUS_PLUS", "RUST"]),
+            (DEVOPS_ENGINEER, ["C++", "Python", "Docker"], ["PYTHON", "DOCKER", "C_PLUS_PLUS"]),
+            (DEVOPS_ENGINEER, ["Ruby", "Go", "Rust"], ["GO", "RUBY", "RUST"]),
+            (DATA_ENGINEER, ["Ruby", "Python", "Spark"], ["PYTHON", "SPARK", "RUBY"]),
+            (DATA_ENGINEER, ["Java", "Go", "Python"], ["GO", "JAVA", "PYTHON"]),
+        ],
+    )
+    def test_language_outside_the_stage_goes_to_the_remaining_part(self, profile, raw, expected):
+        assert sorted_names(raw, profile) == expected
+
+    @pytest.mark.parametrize("profile", PROFILES)
+    def test_belongs_to_profile_matches_the_sorted_profile_part(self, profile):
+        records = normalize_skills(["Java", "Python", "Rust", "Docker", "Git", "Pandas", "JS"])
+        part = [r for r in records if belongs_to_profile(r, profile)]
+        ordered = sort_records_by_profile(records, profile)
+        assert ordered[: len(part)] == [r for r in ordered if belongs_to_profile(r, profile)]
+
+    def test_restrictions_only_name_languages_of_the_category(self):
+        for (profile, category), names in SLOT_RESTRICTIONS.items():
+            assert profile in PROFILES
+            assert category in PROFILE_SLOTS[profile]
+            assert names

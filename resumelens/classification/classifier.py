@@ -35,6 +35,7 @@ from resumelens.classification.automata import (
     get_ml_automaton,
 )
 from resumelens.core.models import EvaluationResult, SkillRecord
+from resumelens.normalization.normalizer import get_default_normalizer
 from resumelens.normalization.sorter import (
     DATA_ENGINEER,
     DEVOPS_ENGINEER,
@@ -42,6 +43,7 @@ from resumelens.normalization.sorter import (
     MACHINE_LEARNING_ENGINEER,
     PROFILES,
     UnknownProfileError,
+    belongs_to_profile,
     resolve_profile,
     sort_by_profile,
 )
@@ -67,6 +69,29 @@ PROFILE_SPECS: Dict[str, ProfileSpec] = {
 
 if set(PROFILE_SPECS) != set(PROFILES) or set(_AUTOMATON_GETTERS) != set(PROFILES):
     raise ValueError("The profiles of the automata and of the sorter do not match.")
+
+
+def _check_sorter_matches_automata() -> None:
+    """Check that the sorter puts in the profile part exactly the alphabet of each automaton.
+
+    If a skill went to the profile part without belonging to a stage of the automaton, the
+    automaton would read it as noise before the profile skills and reject a valid resume.
+    """
+    normalizer = get_default_normalizer()
+    for identifier, spec in PROFILE_SPECS.items():
+        in_profile = {
+            name
+            for name in KNOWN_SKILLS
+            if belongs_to_profile(SkillRecord(name, name, normalizer.category_of(name) or ""), identifier)
+        }
+        if in_profile != set(spec.alphabet):
+            raise ValueError(
+                f"The sorter and the automaton of {spec.name!r} disagree on the profile skills: "
+                f"{sorted(in_profile ^ set(spec.alphabet))}."
+            )
+
+
+_check_sorter_matches_automata()
 
 
 def profile_spec(profile: str) -> ProfileSpec:

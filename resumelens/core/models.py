@@ -5,6 +5,17 @@ from typing import Dict, List
 
 
 @dataclass
+class JobEntry:
+    """A job of the *Experience* section: ``Role, Company (start - end)`` and its bullets."""
+
+    description: str = ""  # the entry as written, e.g. "Full Stack Developer, Raven Labs (2023 - 2026)"
+    role: str = ""
+    company: str = ""
+    period: str = ""  # "2023 - 2026"
+    highlights: List[str] = field(default_factory=list)
+
+
+@dataclass
 class CandidateInfo:
     name: str = ""
     email: str = ""
@@ -12,6 +23,11 @@ class CandidateInfo:
     links: List[str] = field(default_factory=list)
     education: List[str] = field(default_factory=list)
     experience: List[str] = field(default_factory=list)
+    # Information shown in the report that does not take part in the verdict.
+    location: str = ""
+    current_role: str = ""
+    summary: List[str] = field(default_factory=list)  # paragraphs of the *Summary* section
+    jobs: List[JobEntry] = field(default_factory=list)  # structure of the entries of ``experience``
 
 
 @dataclass

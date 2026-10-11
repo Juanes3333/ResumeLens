@@ -3,11 +3,15 @@ Gwen Stacy
 Contact:
 Email: gwen.stacy@oscorp.com
 Phone: +1 555 888 9900
+Location: Brooklyn, New York
+Current role: Data Engineer at Oscorp Data
 LinkedIn: https://www.linkedin.com/in/gwen-stacy
 GitHub: https://github.com/gstacy
 
 Summary:
 3 years of experience building scalable data architectures and analytical pipelines.
+
+She designs batch pipelines that move large datasets from several sources into analytical databases and schedules them with workflow tools.
 
 Technical Skills:
 Python, Apache Spark, Airflow, PostgreSQL, Git.

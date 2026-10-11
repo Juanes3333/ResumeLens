@@ -3,11 +3,15 @@ WEDNESDAY ADDAMS
 Contact:
 Email: wednesday.addams@nevermore.edu
 Phone: +1 555 666 7777
+Location: Nevermore Academy, Jericho
+Current role: Student and independent investigator
 LinkedIn: https://www.linkedin.com/in/wednesday-addams
 GitHub: https://github.com/wednesday-addams
 
 Summary:
 3 years of experience developing web applications.
+
+Her work at Nevermore Academy has involved developing small software tools to organize clues, maintain investigation records, and connect information collected from different sources around Jericho.
 
 Technical Skills:
 JS, React.js, NodeJS, Postgres, Git.

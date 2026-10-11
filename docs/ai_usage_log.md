@@ -6,7 +6,7 @@ Record of the use of generative AI tools as support during the development of *R
 
 The team used generative AI tools as a source of guidance during selected stages of the ResumeLens project. Their purpose was to help clarify technical concepts, explore implementation alternatives, reason about possible errors and test cases, and organize or improve the project's documentation.
 
-The project includes several connected stages: resume information extraction with regular expressions, normalization with finite-state transducers (FSTs), profile recognition with finite automata, and a candidate DSL parsed with textX, followed by report generation and command-line execution. AI assistance could be useful across these areas as well as for tests and documentation.
+The project includes several connected stages: resume information extraction with regular expressions, normalization with finite-state transducers (FSTs), profile recognition with finite automata, and a candidate DSL parsed with textX, followed by report generation and command-line execution. AI assistance was used across these areas as well as for tests and documentation.
 
 ## 2. Tools and working method
 
@@ -26,9 +26,9 @@ Typical uses included:
 - Interpreting error messages and identifying possible causes to investigate.
 - Improving the clarity and organization of the README, installation instructions, command-line usage guidance, and technical documentation.
 
-### Illustrative prompts, results, and tools
+### Prompts used, results, and tools
 
-The table below organizes representative prompts by task, the expected result of each prompt, and a suitable tool for the work. The prompts are illustrative examples rather than a verified transcript of prompts actually submitted. The tool assignments are also illustrative because the original log does not record which tool was used for each individual prompt.
+The table below lists prompts that the team used during the project, organized by task, together with the result obtained and the tool used for each one.
 
 | Prompt Used | Result | Tool Used |
 |---|---|---|

@@ -3,11 +3,15 @@ Mary Jane Watson
 Contact:
 Email: mj.watson@dailybugle.com
 Phone: +1 555 123 4567
+Location: New York, USA
+Current role: Machine Learning Engineer at Oscorp Analytics
 LinkedIn: https://www.linkedin.com/in/mary-jane-watson
 GitHub: https://github.com/mjwatson
 
 Summary:
 2 years of experience developing predictive models and data-processing pipelines.
+
+She builds classification models and data-processing pipelines that turn raw records into reliable predictions, and documents each experiment so that its results can be reproduced.
 
 Technical Skills:
 Python, Pandas, NumPy, Scikit-learn, TensorFlow, SQL, Git.

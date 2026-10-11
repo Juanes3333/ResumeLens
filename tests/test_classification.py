@@ -61,6 +61,7 @@ from resumelens.classification.automata import (
 )
 from resumelens.core.models import EvaluationResult
 from resumelens.extraction.extractor import extract_resume
+from resumelens.core.models import SkillRecord
 from resumelens.normalization import PROFILES, normalize_with_report, resolve_profile, sort_by_profile
 
 FULL_STACK_ACCEPTED = [
@@ -1280,3 +1281,65 @@ class TestPackageInterface:
     def test_sorter_and_automata_profiles_match(self):
         assert set(PROFILE_SPECS) == set(PROFILES)
         assert [resolve_profile(profile.name) for profile in ALL_PROFILES] == list(PROFILES)
+
+
+# ---------------------------------------------------------------------------
+# Languages that the profile does not read do not reject a valid resume
+# ---------------------------------------------------------------------------
+class TestExtraLanguagesAreNoise:
+    @staticmethod
+    def verdicts(raw_skills):
+        return classify_all(normalize_with_report(raw_skills).records).verdicts()
+
+    @pytest.mark.parametrize(
+        "raw_skills",
+        [
+            ["Java", "Python", "Pandas", "TensorFlow", "SQL", "Git"],
+            ["C++", "Python", "Pandas", "NumPy", "sklearn", "MySQL", "Git"],
+            ["Python", "Rust", "Pandas", "sklearn", "SQL", "Git"],
+        ],
+    )
+    def test_machine_learning_accepts_extra_languages(self, raw_skills):
+        assert self.verdicts(raw_skills)["Machine Learning Engineer"] == ACCEPTED
+
+    @pytest.mark.parametrize(
+        "raw_skills",
+        [
+            ["C++", "Python", "Docker", "K8s", "Terraform", "Git"],
+            ["Python", "Docker", "K8s", "Terraform", "Git", "Rust"],
+            ["Go", "Rust", "Docker", "K8s", "Ansible", "AWS", "Git"],
+        ],
+    )
+    def test_devops_accepts_extra_languages(self, raw_skills):
+        assert self.verdicts(raw_skills)["DevOps Engineer"] == ACCEPTED
+
+    @pytest.mark.parametrize(
+        "raw_skills",
+        [
+            ["Ruby", "Python", "Spark", "Airflow", "SQL", "Git"],
+            ["Java", "Rust", "Spark", "Airflow", "PostgreSQL", "Git"],
+        ],
+    )
+    def test_data_engineer_accepts_extra_languages(self, raw_skills):
+        assert self.verdicts(raw_skills)["Data Engineer"] == ACCEPTED
+
+    def test_resume_with_only_a_foreign_language_is_still_rejected(self):
+        result = classify_records(
+            normalize_with_report(["Java", "Pandas", "sklearn", "SQL", "Git"]).records,
+            "Machine Learning Engineer",
+        )
+        assert not result.is_accepted
+        assert "base_language" in result.details
+
+    def test_sorter_and_automata_agree_on_the_profile_skills(self):
+        from resumelens.normalization import get_default_normalizer
+        from resumelens.normalization.sorter import belongs_to_profile
+
+        normalizer = get_default_normalizer()
+        for identifier, spec in PROFILE_SPECS.items():
+            names = {
+                name
+                for name in KNOWN_SKILLS
+                if belongs_to_profile(SkillRecord(name, name, normalizer.category_of(name)), identifier)
+            }
+            assert names == set(spec.alphabet), identifier

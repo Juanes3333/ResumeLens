@@ -16,7 +16,7 @@ from typing import Dict, List, Tuple
 
 import pytest
 
-from resumelens.cli import EXIT_ERROR, EXIT_OK, main, run_pipeline, write_report
+from resumelens.cli import EXIT_ERROR, EXIT_OK, main, run_pipeline, run_pipeline_text, write_report
 from resumelens.grammar import is_valid_profile_source
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -140,6 +140,23 @@ class TestValidResumes:
             assert token in run.source
 
 
+    def test_report_details_do_not_change_the_verdict(self, resume_texts, alias):
+        """Location, current role, summary and bullets are shown, but they never decide."""
+        text = resume_texts[alias]
+        kept = [
+            line
+            for line in text.splitlines()
+            if not line.startswith(("Location:", "Current role:", "- "))
+        ]
+        stripped = chr(10).join(kept)
+        with_details = run_pipeline_text(text)
+        without_details = run_pipeline_text(stripped)
+        assert without_details.resume.candidate_info.location == ""
+        assert without_details.resume.candidate_info.jobs[0].highlights == []
+        assert with_details.report.verdicts() == without_details.report.verdicts()
+        assert with_details.sequences == without_details.sequences
+
+
 # ---------------------------------------------------------------------------
 # Reports written on disk
 # ---------------------------------------------------------------------------
@@ -174,6 +191,31 @@ class TestReportFiles:
         html = output.read_text(encoding="utf-8")
         assert len(re.findall(r'class="accepted"', html)) == 1
         assert len(re.findall(r'class="rejected"', html)) == 3
+
+    def test_html_report_has_the_sections_of_the_example_page(self, resume_paths, tmp_path, alias):
+        run = run_pipeline(resume_paths[alias])
+        info = run.resume.candidate_info
+        output = tmp_path / "report.html"
+        write_report(run.model, output)
+        html = output.read_text(encoding="utf-8")
+        titles = re.findall(r"<h2>(.*?)</h2>", html)
+        assert titles == [
+            "Personal Information",
+            "Profile Summary",
+            "Education",
+            "Experience",
+            "Normalized Technical Skills",
+            "Qualification Evaluation",
+        ]
+        assert f"<strong>Location:</strong> {info.location}" in html
+        assert f"<strong>Current role:</strong> {info.current_role}" in html
+        for paragraph in info.summary:
+            assert f"<p>{paragraph}</p>" in html
+        job = info.jobs[0]
+        assert f"<h3>{job.role}</h3>" in html
+        assert f'<p class="metadata">{job.company} &middot; {job.period}</p>' in html
+        for highlight in job.highlights:
+            assert f"<li>{highlight}</li>" in html
 
     def test_markdown_report(self, resume_paths, tmp_path, alias):
         name, _, accepted, sequence = EXPECTED[alias]

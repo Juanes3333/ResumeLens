@@ -6,20 +6,25 @@ education and experience lines, the raw (not normalized) skill tokens and the
 technologies detected by the skill regex bank, and builds a ``RawResumeData``.
 """
 
-from typing import Dict, List, Set
+import re
+from typing import Dict, List, Pattern, Set
 
-from resumelens.core.models import CandidateInfo, RawResumeData
+from resumelens.core.models import CandidateInfo, JobEntry, RawResumeData
 from resumelens.extraction.patterns import (
+    CURRENT_ROLE_PATTERN,
     DATE_RANGE_PATTERN,
     DEGREE_PATTERN,
     EMAIL_PATTERN,
     EXPERIENCE_ENTRY_PATTERN,
     GITHUB_URL_PATTERN,
+    HIGHLIGHT_PATTERN,
     INSTITUTION_PATTERN,
     LINKEDIN_URL_PATTERN,
+    LOCATION_PATTERN,
     NAME_PATTERN,
     PHONE_PATTERN,
     SECTION_HEADER_PATTERN,
+    SKILL_BULLET_PATTERN,
     SKILL_PATTERNS,
     SKILL_SEPARATOR_PATTERN,
     URL_PATTERN,
@@ -28,7 +33,11 @@ from resumelens.extraction.patterns import (
 
 _SECTION_ALIASES: Dict[str, str] = {
     "skills": "technical skills",
+    "technologies": "technical skills",
+    "tech stack": "technical skills",
     "work experience": "experience",
+    "professional experience": "experience",
+    "contact information": "contact",
 }
 
 
@@ -36,8 +45,9 @@ def split_sections(text: str) -> Dict[str, str]:
     """Split ``text`` into sections keyed by lowercase header title.
 
     Text before the first header is stored under the key ``""``. Aliases are unified
-    (``Skills`` -> ``technical skills``, ``Work Experience`` -> ``experience``). If a
-    header is repeated, the bodies are concatenated.
+    (``Skills`` and ``Technologies`` -> ``technical skills``, ``Work Experience`` ->
+    ``experience``). The content that follows the colon of a header on the same line belongs
+    to the section. If a header is repeated, the bodies are concatenated.
     """
     sections: Dict[str, str] = {}
     headers = list(SECTION_HEADER_PATTERN.finditer(text))
@@ -45,7 +55,7 @@ def split_sections(text: str) -> Dict[str, str]:
     sections[""] = preamble
     for i, match in enumerate(headers):
         end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
-        title = match.group("title").lower()
+        title = " ".join(match.group("title").lower().split())
         title = _SECTION_ALIASES.get(title, title)
         body = text[match.end():end]
         sections[title] = sections[title] + "\n" + body if title in sections else body
@@ -116,15 +126,78 @@ def extract_experience(text: str) -> List[str]:
     return items
 
 
+def _field_value(pattern: Pattern[str], group: str, text: str) -> str:
+    """Return the trimmed value of a ``Label: value`` line, looking first in ``Contact``."""
+    scope = split_sections(text).get("contact", "")
+    for source in (scope, text):
+        for match in pattern.finditer(source):
+            value = match.group(group).strip()
+            if value:
+                return value
+    return ""
+
+
+def extract_location(text: str) -> str:
+    """Return the value of the ``Location:`` line (``""`` if there is none)."""
+    return _field_value(LOCATION_PATTERN, "location", text)
+
+
+def extract_current_role(text: str) -> str:
+    """Return the value of the ``Current role:`` line (``""`` if there is none)."""
+    return _field_value(CURRENT_ROLE_PATTERN, "role", text)
+
+
+def extract_summary(text: str) -> List[str]:
+    """Return the paragraphs of the ``Summary`` section, with their whitespace collapsed.
+
+    Paragraphs are separated by blank lines. Without the section the result is ``[]``.
+    """
+    body = split_sections(text).get("summary", "")
+    paragraphs = (" ".join(block.split()) for block in re.split(r"\n[ \t]*\n", body))
+    return [paragraph for paragraph in paragraphs if paragraph]
+
+
+def extract_jobs(text: str) -> List[JobEntry]:
+    """Return the job entries of the ``Experience`` section with their bullets.
+
+    Each entry is a line of ``EXPERIENCE_ENTRY_PATTERN``; its bullets are the
+    ``HIGHLIGHT_PATTERN`` lines between it and the next entry.
+    """
+    body = split_sections(text).get("experience", "")
+    entries = list(EXPERIENCE_ENTRY_PATTERN.finditer(body))
+    jobs: List[JobEntry] = []
+    for i, match in enumerate(entries):
+        end = entries[i + 1].start() if i + 1 < len(entries) else len(body)
+        highlights = [
+            m.group("text").strip()
+            for m in HIGHLIGHT_PATTERN.finditer(body, match.end(), end)
+            if m.group("text").strip()
+        ]
+        jobs.append(
+            JobEntry(
+                description=match.group(0).strip(),
+                role=match.group("role").strip(),
+                company=match.group("company").strip(),
+                period=f"{match.group('start')} - {match.group('end')}",
+                highlights=highlights,
+            )
+        )
+    return jobs
+
+
 def extract_skills(text: str) -> List[str]:
     """Return the raw skill tokens of the ``Technical Skills`` section.
 
     Tokens keep their original spelling and order of appearance; they are split with
-    ``SKILL_SEPARATOR_PATTERN`` (commas, semicolons and line breaks) and a trailing
-    period is dropped. Without the section the result is ``[]``.
+    ``SKILL_SEPARATOR_PATTERN`` (commas, semicolons, vertical bars, bullet dots and line
+    breaks); a list marker (``- Python``) and a trailing period are dropped. Without the
+    section the result is ``[]``.
     """
     body = split_sections(text).get("technical skills", "")
-    tokens = (t.strip().rstrip(".").strip() for t in SKILL_SEPARATOR_PATTERN.split(body))
+    tokens = (
+        SKILL_BULLET_PATTERN.sub("", t.strip()).rstrip(".").strip()
+        for t in SKILL_SEPARATOR_PATTERN.split(body)
+    )
     return [t for t in tokens if t]
 
 
@@ -160,6 +233,10 @@ def extract_resume(text: str) -> RawResumeData:
         links=list(contact["links"]),  # type: ignore[call-overload]
         education=extract_education(text),
         experience=extract_experience(text),
+        location=extract_location(text),
+        current_role=extract_current_role(text),
+        summary=extract_summary(text),
+        jobs=extract_jobs(text),
     )
     return RawResumeData(
         raw_text=text,

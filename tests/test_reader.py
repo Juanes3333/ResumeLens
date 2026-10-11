@@ -10,7 +10,7 @@ from resumelens.core.models import (
     RawResumeData,
     SkillRecord,
 )
-from resumelens.core.reader import read_resume_file
+from resumelens.core.reader import decode_resume, read_resume_file
 
 from tests.conftest import RESUME_FILES, VALID_ALIASES
 
@@ -102,3 +102,15 @@ def test_default_lists_not_shared():
     a, b = CandidateInfo(), CandidateInfo()
     a.links.append("x")
     assert b.links == []
+
+
+def test_decode_resume_cleans_bytes_like_read_resume_file(tmp_path):
+    data = b"\xef\xbb\xbfa\r\nb\rc\x00d\n"
+    assert decode_resume(data) == "a\nb\ncd\n"
+    f = tmp_path / "cv.txt"
+    f.write_bytes(data)
+    assert read_resume_file(f) == decode_resume(data)
+
+
+def test_decode_resume_replaces_invalid_utf8_instead_of_raising():
+    assert decode_resume(b"Jos\xe9") == "Jos\ufffd"

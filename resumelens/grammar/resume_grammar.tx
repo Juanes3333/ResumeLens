@@ -8,9 +8,9 @@
 //   S      CandidateReport, the first rule of the file and root of the model;
 //   P      the rules themselves.
 //
-// A document describes one candidate: personal and contact data, education and
-// experience entries, the normalized skills (Stage 2) and one formal verdict for
-// each of the four supported profiles (Stage 3).
+// A document describes one candidate: personal and contact data, an optional profile
+// summary, education and experience entries, the normalized skills (Stage 2) and one
+// formal verdict for each of the four supported profiles (Stage 3).
 //
 // Example:
 //
@@ -19,10 +19,17 @@
 //           name: "WEDNESDAY ADDAMS"
 //           email: wednesday.addams@nevermore.edu
 //           phone: +1 555 666 7777
+//           location: "Nevermore Academy, Jericho"
+//           current_role: "Student and independent investigator"
 //           link: https://github.com/wednesday-addams
 //       }
+//       summary { paragraph "3 years of experience developing web applications." }
 //       education  { study "B.S. in Computer Science" }
-//       experience { job "Full Stack Developer, Raven Labs (2023 - 2026)" }
+//       experience {
+//           job "Full Stack Developer, Raven Labs (2023 - 2026)"
+//               role "Full Stack Developer" company "Raven Labs" period "2023 - 2026"
+//               highlight "Built a React.js dashboard backed by a NodeJS REST API."
+//       }
 //       skills {
 //           skill JAVASCRIPT category web_language raw "JS"
 //           skill GIT category vcs raw "Git"
@@ -45,10 +52,12 @@
 // Root rule (start symbol S)
 // ---------------------------------------------------------------------------
 
-// The five blocks are mandatory and always appear in this order.
+// Five blocks are mandatory and always appear in this order; the profile summary is an
+// optional block that goes right after the personal information.
 CandidateReport:
     'candidate' '{'
         personal=PersonalInfo
+        (summary=SummarySection)?
         education=EducationSection
         experience=ExperienceSection
         skills=SkillSection
@@ -61,15 +70,33 @@ CandidateReport:
 // Personal and contact information
 // ---------------------------------------------------------------------------
 
-// Only the name is mandatory. E-mail and phone appear at most once; the links
-// (LinkedIn, GitHub, ...) may be repeated.
+// Only the name is mandatory. E-mail, phone, location and current role appear at most
+// once; the links (LinkedIn, GitHub, ...) may be repeated. Location and current role are
+// shown in the report; they do not take part in the verdict.
 PersonalInfo:
     'personal' '{'
         'name' ':' name=STRING
         ('email' ':' email=Email)?
         ('phone' ':' phone=Phone)?
+        ('location' ':' location=STRING)?
+        ('current_role' ':' current_role=STRING)?
         ('link' ':' links+=Url)*
     '}'
+;
+
+
+// ---------------------------------------------------------------------------
+// Profile summary (optional): zero or more paragraphs
+// ---------------------------------------------------------------------------
+
+SummarySection:
+    'summary' '{'
+        paragraphs*=SummaryParagraph
+    '}'
+;
+
+SummaryParagraph:
+    'paragraph' text=STRING
 ;
 
 
@@ -93,8 +120,12 @@ ExperienceSection:
     '}'
 ;
 
+// description: the entry as written. A structured entry also gives its role, company and
+// period, and any number of highlights (the bullets of the entry).
 ExperienceEntry:
     'job' description=STRING
+    ('role' role=STRING 'company' company=STRING 'period' period=STRING)?
+    ('highlight' highlights+=STRING)*
 ;
 
 

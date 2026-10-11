@@ -19,7 +19,7 @@ from textx.exceptions import TextXError, TextXSemanticError, TextXSyntaxError
 
 import resumelens.grammar as grammar
 from resumelens.classification import classify_all
-from resumelens.core.models import CandidateInfo, EvaluationResult, SkillRecord
+from resumelens.core.models import CandidateInfo, EvaluationResult, JobEntry, SkillRecord
 from resumelens.extraction.extractor import extract_resume
 from resumelens.grammar import (
     GRAMMAR_PATH,
@@ -107,6 +107,20 @@ def model_to_inputs(model):
         links=list(model.personal.links),
         education=[e.description for e in model.education.entries],
         experience=[e.description for e in model.experience.entries],
+        location=model.personal.location or "",
+        current_role=model.personal.current_role or "",
+        summary=[p.text for p in model.summary.paragraphs] if model.summary else [],
+        jobs=[
+            JobEntry(
+                description=e.description,
+                role=e.role,
+                company=e.company,
+                period=e.period,
+                highlights=list(e.highlights),
+            )
+            for e in model.experience.entries
+            if e.role
+        ],
     )
     records = [
         SkillRecord(raw_name=s.raw, canonical_name=s.canonical, category=s.category)
@@ -597,3 +611,110 @@ def test_fixture_with_missing_contact_data_is_still_valid(fullstack_text):
     assert model.personal.email is None
     assert model.personal.phone is None
     assert model.personal.links == []
+
+
+# ---------------------------------------------------------------------------
+# Report details: location, current role, summary and structured jobs
+# ---------------------------------------------------------------------------
+def detailed_info():
+    return make_info(
+        location="Bogota, Colombia",
+        current_role='Developer at "Globant"',
+        summary=["First paragraph.", "Second paragraph."],
+        experience=["3 years of experience", "Backend Developer, Globant (2021 - 2024)"],
+        jobs=[
+            JobEntry(
+                description="Backend Developer, Globant (2021 - 2024)",
+                role="Backend Developer",
+                company="Globant",
+                period="2021 - 2024",
+                highlights=["Built APIs.", "Wrote tests."],
+            )
+        ],
+    )
+
+
+def test_serializer_writes_location_role_summary_and_structured_jobs():
+    source = make_source(info=detailed_info())
+    assert 'location: "Bogota, Colombia"' in source
+    assert 'current_role: "Developer at \\"Globant\\""' in source
+    assert 'paragraph "First paragraph."' in source and 'paragraph "Second paragraph."' in source
+    assert 'job "3 years of experience"\n' in source
+    assert 'role "Backend Developer" company "Globant" period "2021 - 2024"' in source
+    assert 'highlight "Built APIs."' in source and 'highlight "Wrote tests."' in source
+    assert source.index("summary {") < source.index("education {")
+
+
+def test_serializer_omits_the_summary_block_and_the_details_when_there_are_none():
+    source = make_source()
+    assert "summary" not in source and "location" not in source and "current_role" not in source
+    assert "highlight" not in source and " role " not in source
+
+
+def test_model_maps_location_role_summary_and_structured_jobs():
+    model = parse_candidate_profile(make_source(info=detailed_info()))
+    assert model.personal.location == "Bogota, Colombia"
+    assert model.personal.current_role == 'Developer at "Globant"'
+    assert [p.text for p in model.summary.paragraphs] == ["First paragraph.", "Second paragraph."]
+    plain, structured = model.experience.entries
+    assert (plain.role, plain.company, plain.period, list(plain.highlights)) == ("", "", "", [])
+    assert (structured.role, structured.company, structured.period) == ("Backend Developer", "Globant", "2021 - 2024")
+    assert list(structured.highlights) == ["Built APIs.", "Wrote tests."]
+
+
+def test_summary_block_is_optional():
+    model = parse_candidate_profile(make_source())
+    assert model.summary is None
+    assert model.personal.location == "" and model.personal.current_role == ""
+
+
+def test_details_round_trip_to_the_same_text():
+    source = make_source(info=detailed_info())
+    again = build_profile_source(*model_to_inputs(parse_candidate_profile(source)))
+    assert again == source
+
+
+@pytest.mark.parametrize(
+    "old, new",
+    [
+        ('location: "Bogota, Colombia"', "location: Bogota"),
+        ('paragraph "First paragraph."', "paragraph First"),
+        ('role "Backend Developer" company "Globant" period "2021 - 2024"', 'role "Backend Developer" company "Globant"'),
+        ('role "Backend Developer" company "Globant" period "2021 - 2024"', 'company "Globant" role "Backend Developer" period "2021 - 2024"'),
+        ('highlight "Built APIs."', "highlight"),
+        ("summary {", "overview {"),
+    ],
+)
+def test_malformed_details_are_rejected(old, new):
+    source = make_source(info=detailed_info())
+    assert old in source
+    with pytest.raises(TextXSyntaxError):
+        parse_candidate_profile(source.replace(old, new, 1))
+
+
+def test_summary_must_come_right_after_the_personal_information():
+    source = make_source(info=detailed_info())
+    block = source[source.index("    summary {"):source.index("    education {")]
+    moved = source.replace(block, "", 1).replace("    skills {", block + "    skills {", 1)
+    with pytest.raises(TextXSyntaxError):
+        parse_candidate_profile(moved)
+
+
+def test_location_and_current_role_may_appear_only_once_and_in_order():
+    source = make_source(info=detailed_info())
+    with pytest.raises(TextXSyntaxError):
+        parse_candidate_profile(source.replace("        location:", '        location: "x"\n        location:', 1))
+    lines = source.splitlines()
+    i = next(k for k, line in enumerate(lines) if "location:" in line)
+    lines[i], lines[i + 1] = lines[i + 1], lines[i]
+    with pytest.raises(TextXSyntaxError):
+        parse_candidate_profile("\n".join(lines))
+
+
+@pytest.mark.parametrize("alias", list(ACCEPTED_PROFILE_BY_ALIAS))
+def test_fixtures_carry_their_report_details_into_the_model(resume_texts, alias):
+    model = parse_candidate_profile(build_profile_source(*pipeline(resume_texts[alias])))
+    assert model.personal.location and model.personal.current_role
+    assert len(model.summary.paragraphs) == 2
+    structured = [e for e in model.experience.entries if e.role]
+    assert len(structured) == 1 and len(structured[0].highlights) == 2

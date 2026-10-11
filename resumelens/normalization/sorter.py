@@ -11,8 +11,10 @@ qualification list (e.g. "Pandas or NumPy" -> ``data_library``). The output is b
 
 1. **Profile part** — the skills whose category is a slot of the profile, slot by slot in
    the profile order; inside a slot, in lexicographic order of the canonical name.
-2. **Remaining part** — the skills of any other category (noise for this profile), in
-   lexicographic order of ``(category, canonical name)``.
+2. **Remaining part** — the skills of any other category, and the skills of a slot category
+   that the slot of this profile does not admit (``SLOT_RESTRICTIONS``: ``JAVA`` is not a
+   Machine Learning language), as noise for this profile, in lexicographic order of
+   ``(category, canonical name)``.
 
 Both rules are total orders on canonical names, so the output is a permutation of the
 input that depends only on the *set* of skills. A slot may hold zero, one or several
@@ -22,7 +24,7 @@ Example (Full Stack): ``Git, NodeJS, JS, Postgres, React.js`` ->
 ``JAVASCRIPT, REACT, NODE_JS, POSTGRESQL, GIT``.
 """
 
-from typing import List, Mapping, Sequence, Tuple
+from typing import FrozenSet, List, Mapping, Sequence, Tuple
 
 from resumelens.core.models import SkillRecord
 from resumelens.normalization.normalizer import (
@@ -99,6 +101,18 @@ PROFILE_SLOTS: Mapping[str, Tuple[str, ...]] = {
 }
 
 
+#: Restrictions of a slot: (profile, category) -> canonical names that belong to the slot of
+#: that profile. A category without an entry admits all its canonical names. Only the
+#: ``language`` slot needs it: the languages accepted by the stage of the profile are fewer
+#: than the languages of the category (ML reads only ``PYTHON``). Any other language is
+#: noise for the profile and goes to the remaining part, where the automaton tolerates it.
+SLOT_RESTRICTIONS: Mapping[Tuple[str, str], FrozenSet[str]] = {
+    (MACHINE_LEARNING_ENGINEER, CATEGORY_LANGUAGE): frozenset({"PYTHON"}),
+    (DEVOPS_ENGINEER, CATEGORY_LANGUAGE): frozenset({"PYTHON", "GO", "JAVA", "RUBY"}),
+    (DATA_ENGINEER, CATEGORY_LANGUAGE): frozenset({"PYTHON", "JAVA", "GO"}),
+}
+
+
 class UnknownProfileError(ValueError):
     """Raised when a profile name is not one of :data:`PROFILES`."""
 
@@ -126,16 +140,29 @@ def profile_slots(profile: str) -> Tuple[str, ...]:
     return PROFILE_SLOTS[resolve_profile(profile)]
 
 
+def belongs_to_profile(record: SkillRecord, profile: str) -> bool:
+    """Return whether ``record`` goes to the profile part (a slot of ``profile``) when sorting.
+
+    Raises:
+        UnknownProfileError: If ``profile`` is not supported.
+    """
+    identifier = resolve_profile(profile)
+    if record.category not in PROFILE_SLOTS[identifier]:
+        return False
+    allowed = SLOT_RESTRICTIONS.get((identifier, record.category))
+    return allowed is None or record.canonical_name in allowed
+
+
 def sort_records_by_profile(records: Sequence[SkillRecord], profile: str) -> List[SkillRecord]:
     """Return the records in the canonical order of ``profile`` (see the module docstring).
 
     Raises:
         UnknownProfileError: If ``profile`` is not supported.
     """
-    slots = profile_slots(profile)
-    position = {category: index for index, category in enumerate(slots)}
-    in_profile = [record for record in records if record.category in position]
-    remaining = [record for record in records if record.category not in position]
+    identifier = resolve_profile(profile)
+    position = {category: index for index, category in enumerate(PROFILE_SLOTS[identifier])}
+    in_profile = [record for record in records if belongs_to_profile(record, identifier)]
+    remaining = [record for record in records if not belongs_to_profile(record, identifier)]
     in_profile.sort(key=lambda record: (position[record.category], record.canonical_name))
     remaining.sort(key=lambda record: (record.category, record.canonical_name))
     return in_profile + remaining
