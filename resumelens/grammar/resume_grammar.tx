@@ -1,0 +1,205 @@
+// ============================================================================
+// ResumeLens - Stage 4: candidate profile specification language (textX)
+//
+// Context-free grammar G = (V, Sigma, S, P) written in textX syntax:
+//   V      the rules of this file that build model objects (CandidateReport,
+//          PersonalInfo, SkillEntry, ...);
+//   Sigma  keywords, punctuation and the lexical tokens (match rules) below;
+//   S      CandidateReport, the first rule of the file and root of the model;
+//   P      the rules themselves.
+//
+// A document describes one candidate: personal and contact data, education and
+// experience entries, the normalized skills (Stage 2) and one formal verdict for
+// each of the four supported profiles (Stage 3).
+//
+// Example:
+//
+//   candidate {
+//       personal {
+//           name: "WEDNESDAY ADDAMS"
+//           email: wednesday.addams@nevermore.edu
+//           phone: +1 555 666 7777
+//           link: https://github.com/wednesday-addams
+//       }
+//       education  { study "B.S. in Computer Science" }
+//       experience { job "Full Stack Developer, Raven Labs (2023 - 2026)" }
+//       skills {
+//           skill JAVASCRIPT category web_language raw "JS"
+//           skill GIT category vcs raw "Git"
+//       }
+//       evaluation {
+//           profile FULL_STACK_DEVELOPER: ACCEPTED
+//               matched [JAVASCRIPT, GIT] details "ACCEPTED - Full Stack Developer"
+//           profile MACHINE_LEARNING_ENGINEER: REJECTED
+//               matched [] details "REJECTED - Machine Learning Engineer"
+//           profile DEVOPS_ENGINEER: REJECTED
+//               matched [] details "REJECTED - DevOps Engineer"
+//           profile DATA_ENGINEER: REJECTED
+//               matched [] details "REJECTED - Data Engineer"
+//       }
+//   }
+// ============================================================================
+
+
+// ---------------------------------------------------------------------------
+// Root rule (start symbol S)
+// ---------------------------------------------------------------------------
+
+// The five blocks are mandatory and always appear in this order.
+CandidateReport:
+    'candidate' '{'
+        personal=PersonalInfo
+        education=EducationSection
+        experience=ExperienceSection
+        skills=SkillSection
+        evaluation=EvaluationSection
+    '}'
+;
+
+
+// ---------------------------------------------------------------------------
+// Personal and contact information
+// ---------------------------------------------------------------------------
+
+// Only the name is mandatory. E-mail and phone appear at most once; the links
+// (LinkedIn, GitHub, ...) may be repeated.
+PersonalInfo:
+    'personal' '{'
+        'name' ':' name=STRING
+        ('email' ':' email=Email)?
+        ('phone' ':' phone=Phone)?
+        ('link' ':' links+=Url)*
+    '}'
+;
+
+
+// ---------------------------------------------------------------------------
+// Education and professional experience (zero or more entries each)
+// ---------------------------------------------------------------------------
+
+EducationSection:
+    'education' '{'
+        entries*=EducationEntry
+    '}'
+;
+
+EducationEntry:
+    'study' description=STRING
+;
+
+ExperienceSection:
+    'experience' '{'
+        entries*=ExperienceEntry
+    '}'
+;
+
+ExperienceEntry:
+    'job' description=STRING
+;
+
+
+// ---------------------------------------------------------------------------
+// Normalized qualifications: one or more skills, as produced by Stage 2
+// ---------------------------------------------------------------------------
+
+// A candidate without any recognized skill is not a valid description.
+SkillSection:
+    'skills' '{'
+        skills+=SkillEntry
+    '}'
+;
+
+// canonical: normalized name (JAVASCRIPT); category: slot of the profile (web_language);
+// raw: the string exactly as the candidate wrote it ("JS").
+SkillEntry:
+    'skill' canonical=CanonicalName 'category' category=Category 'raw' raw=STRING
+;
+
+
+// ---------------------------------------------------------------------------
+// Classification results: one verdict per profile, always the four of them and
+// always in the order of the roadmap.
+// ---------------------------------------------------------------------------
+
+EvaluationSection:
+    'evaluation' '{'
+        results+=FullStackResult
+        results+=MachineLearningResult
+        results+=DevOpsResult
+        results+=DataEngineerResult
+    '}'
+;
+
+// Abstract rule: common type of the four profile results.
+ProfileResult:
+    FullStackResult | MachineLearningResult | DevOpsResult | DataEngineerResult
+;
+
+// matched: skills of the sequence that belong to the stages of the profile (may be
+// empty); details: report of the automaton. A string may span several lines, and a
+// double quote inside it is written \".
+FullStackResult:
+    'profile' name='FULL_STACK_DEVELOPER' ':' verdict=Verdict
+    'matched' '[' (matched+=CanonicalName[','])? ']'
+    'details' details=STRING
+;
+
+MachineLearningResult:
+    'profile' name='MACHINE_LEARNING_ENGINEER' ':' verdict=Verdict
+    'matched' '[' (matched+=CanonicalName[','])? ']'
+    'details' details=STRING
+;
+
+DevOpsResult:
+    'profile' name='DEVOPS_ENGINEER' ':' verdict=Verdict
+    'matched' '[' (matched+=CanonicalName[','])? ']'
+    'details' details=STRING
+;
+
+DataEngineerResult:
+    'profile' name='DATA_ENGINEER' ':' verdict=Verdict
+    'matched' '[' (matched+=CanonicalName[','])? ']'
+    'details' details=STRING
+;
+
+// Formal verdict of an automaton.
+Verdict:
+    'ACCEPTED' | 'REJECTED'
+;
+
+
+// ---------------------------------------------------------------------------
+// Lexical tokens (regular languages, as in Stage 1 and Stage 2)
+// ---------------------------------------------------------------------------
+
+// Canonical skill name: upper case letters, digits and underscores (NODE_JS).
+CanonicalName:
+    /[A-Z][A-Z0-9_]*/
+;
+
+// Category of a skill: lower case snake_case identifier (web_language).
+Category:
+    /[a-z][a-z0-9_]*/
+;
+
+// E-mail address, with the same shape as the Stage 1 pattern.
+Email:
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/
+;
+
+// Phone number: optional country code and 3-3-4 digits (+1 555 666 7777).
+Phone:
+    /(\+\d{1,3}[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}/
+;
+
+// HTTP or HTTPS URL, with the same shape as the Stage 1 pattern.
+Url:
+    /(?i)https?:\/\/[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+(\/[\w%~+-]+(\.[\w%~+-]+)*)*/
+;
+
+
+// ---------------------------------------------------------------------------
+// Comments: from // to the end of the line
+// ---------------------------------------------------------------------------
+
+Comment: /\/\/.*$/;
